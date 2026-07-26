@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 import {
-  AlertCircle, Blocks, CheckCircle2, CircleDollarSign, ClipboardList,
+  AlertCircle, Blocks, CalendarDays, CheckCircle2, CircleDollarSign, ClipboardList,
   Droplets, Home, Leaf, LoaderCircle, Menu, Package, Plus, RefreshCw,
-  Sprout, Tractor, X
+  Sprout, Tractor, Users, Wrench, X
 } from "lucide-react";
 
 const SUPABASE_URL = "https://itlngocavjyrjgeblsmq.supabase.co";
@@ -16,6 +16,9 @@ const NAV = [
   ["fields", "Fields", Tractor],
   ["nursery", "Nursery", Sprout],
   ["crops", "Crop Cycles", Leaf],
+  ["activities", "Field Activities", Wrench],
+  ["calendar", "Work Calendar", CalendarDays],
+  ["workers", "Workers", Users],
   ["irrigation", "Irrigation", Droplets],
   ["inventory", "Inventory", Package],
   ["expenses", "Expenses", CircleDollarSign],
@@ -35,6 +38,18 @@ const emptyCycle = {
   expected_harvest_date: "", status: "planned", area_acres: "", notes: ""
 };
 
+const emptyActivity = {
+  field_id: "", crop_cycle_id: "", activity_type: "irrigation",
+  scheduled_date: new Date().toISOString().slice(0,10),
+  completed_date: "", status: "planned", worker_id: "",
+  input_name: "", quantity: "", unit: "", labour_cost: "", input_cost: "", notes: ""
+};
+
+const emptyWorker = {
+  full_name: "", phone: "", role: "general worker",
+  daily_rate: "", status: "active"
+};
+
 function friendlyError(error) {
   const message = error?.message || String(error);
   if (message.includes("row-level security")) {
@@ -42,6 +57,9 @@ function friendlyError(error) {
   }
   if (message.includes("column") && message.includes("does not exist")) {
     return "The V5 database upgrade has not been run yet. Run database-upgrade.sql in Supabase SQL Editor.";
+  }
+  if (message.includes('crop_id') && message.includes('not-null')) {
+    return "The original crop_cycles table still requires crop_id. Run the V5.2 database-upgrade.sql script.";
   }
   return message;
 }
@@ -54,6 +72,8 @@ export default function App() {
   const [fields, setFields] = useState([]);
   const [batches, setBatches] = useState([]);
   const [cycles, setCycles] = useState([]);
+  const [activities, setActivities] = useState([]);
+  const [workers, setWorkers] = useState([]);
   const [status, setStatus] = useState({ type: "loading", message: "Connecting to Supabase…" });
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState({});
@@ -94,11 +114,22 @@ export default function App() {
         .from("crop_cycles").select("*").order("planting_date", { ascending: false });
       if (cycleError) throw cycleError;
 
+      const { data: activityRows, error: activityError } = await supabase
+        .from("field_activities").select("*").eq("farm_id", activeFarm.id)
+        .order("scheduled_date", { ascending: false });
+      if (activityError) throw activityError;
+
+      const { data: workerRows, error: workerError } = await supabase
+        .from("workers").select("*").eq("farm_id", activeFarm.id).order("full_name");
+      if (workerError) throw workerError;
+
       setBlocks(blockRows || []);
       setFields(farmFields);
       setBatches(batchRows || []);
       setCycles((cycleRows || []).filter(c => fieldIds.has(c.field_id)));
-      setStatus({ type: "success", message: "Connected to Supabase. Live V5 data loaded." });
+      setActivities(activityRows || []);
+      setWorkers(workerRows || []);
+      setStatus({ type: "success", message: "Connected to Supabase. Live V6 data loaded." });
     } catch (error) {
       setStatus({ type: "error", message: friendlyError(error) });
     }
@@ -111,14 +142,22 @@ export default function App() {
     const activeFields = fields.filter(f => ["growing","active","planted"].includes(String(f.status || "").toLowerCase())).length;
     const seedlings = batches.reduce((sum, b) => sum + Math.max(0, Number(b.germinated || 0) - Number(b.losses || 0)), 0);
     const ready = batches.filter(b => String(b.status).toLowerCase() === "ready").length;
-    return { totalArea, activeFields, seedlings, ready };
-  }, [fields, batches]);
+    const today = new Date().toISOString().slice(0,10);
+    const dueToday = activities.filter(a => a.scheduled_date === today && a.status !== "completed").length;
+    const overdue = activities.filter(a => a.scheduled_date && a.scheduled_date < today && a.status !== "completed").length;
+    return { totalArea, activeFields, seedlings, ready, dueToday, overdue };
+  }, [fields, batches, activities]);
 
   const blockName = id => blocks.find(b => b.id === id)?.name || "Unknown block";
   const fieldName = id => fields.find(f => f.id === id)?.name || "Unknown field";
   const batchName = id => {
     const b = batches.find(x => x.id === id);
     return b ? `${b.crop_name}${b.variety ? " · " + b.variety : ""}` : "Direct planting";
+  };
+  const workerName = id => workers.find(w => w.id === id)?.full_name || "Unassigned";
+  const cycleName = id => {
+    const c = cycles.find(x => x.id === id);
+    return c ? `${c.crop_name}${c.variety ? " · " + c.variety : ""}` : "No crop cycle";
   };
 
   function open(type) {
@@ -131,6 +170,13 @@ export default function App() {
       source_batch_id: batches.find(b => b.status === "ready")?.id || "",
       area_acres: fields[0]?.area_acres || ""
     });
+    if (type === "activity") setForm({
+      ...emptyActivity,
+      field_id: fields[0]?.id || "",
+      crop_cycle_id: cycles.find(c => c.field_id === fields[0]?.id)?.id || "",
+      worker_id: workers[0]?.id || ""
+    });
+    if (type === "worker") setForm(emptyWorker);
     setModal(type);
   }
 
@@ -186,6 +232,36 @@ export default function App() {
         });
         if (error) throw error;
       }
+      if (modal === "activity") {
+        const { error } = await supabase.from("field_activities").insert({
+          farm_id: farm.id,
+          field_id: form.field_id,
+          crop_cycle_id: form.crop_cycle_id || null,
+          activity_type: form.activity_type,
+          scheduled_date: form.scheduled_date,
+          completed_date: form.completed_date || null,
+          status: form.status,
+          worker_id: form.worker_id || null,
+          input_name: form.input_name.trim() || null,
+          quantity: form.quantity ? Number(form.quantity) : null,
+          unit: form.unit.trim() || null,
+          labour_cost: Number(form.labour_cost || 0),
+          input_cost: Number(form.input_cost || 0),
+          notes: form.notes.trim() || null
+        });
+        if (error) throw error;
+      }
+      if (modal === "worker") {
+        const { error } = await supabase.from("workers").insert({
+          farm_id: farm.id,
+          full_name: form.full_name.trim(),
+          phone: form.phone.trim() || null,
+          role: form.role.trim() || null,
+          daily_rate: Number(form.daily_rate || 0),
+          status: form.status
+        });
+        if (error) throw error;
+      }
       setModal(null);
       await loadData();
     } catch (error) {
@@ -198,6 +274,19 @@ export default function App() {
   async function updateBatchStatus(id, newStatus) {
     try {
       const { error } = await supabase.from("propagation_batches").update({ status: newStatus }).eq("id", id);
+      if (error) throw error;
+      await loadData();
+    } catch (error) {
+      setStatus({ type: "error", message: friendlyError(error) });
+    }
+  }
+
+  async function completeActivity(id) {
+    try {
+      const { error } = await supabase.from("field_activities").update({
+        status: "completed",
+        completed_date: new Date().toISOString().slice(0,10)
+      }).eq("id", id);
       if (error) throw error;
       await loadData();
     } catch (error) {
@@ -233,15 +322,15 @@ export default function App() {
           <section className="hero">
             <div><h2>Good afternoon, farmer.</h2><p>Track your farm from seed propagation through field production.</p></div>
             <div className="button-row">
-              <button className="button secondary" onClick={() => open("batch")}><Plus size={17}/> Nursery batch</button>
-              <button className="button primary" disabled={!fields.length} onClick={() => open("cycle")}><Plus size={17}/> Crop cycle</button>
+              <button className="button secondary" disabled={!fields.length} onClick={() => open("activity")}><Plus size={17}/> Field activity</button>
+              <button className="button primary" onClick={() => open("batch")}><Plus size={17}/> Nursery batch</button>
             </div>
           </section>
           <section className="stats-grid">
             <Stat label="Farm blocks" value={blocks.length} detail="Management areas"/>
             <Stat label="Fields" value={fields.length} detail={`${metrics.totalArea.toFixed(1)} acres mapped`}/>
-            <Stat label="Seedlings growing" value={metrics.seedlings} detail={`${batches.length} propagation batches`}/>
-            <Stat label="Ready batches" value={metrics.ready} detail="Ready for transplanting"/>
+            <Stat label="Activities today" value={metrics.dueToday} detail={`${metrics.overdue} overdue tasks`}/>
+            <Stat label="Workers" value={workers.length} detail="Available labour records"/>
           </section>
           <section className="split-grid">
             <Card title="Nursery batches" subtitle="Latest propagation activity" action="Add" onAction={() => open("batch")}>
@@ -312,6 +401,46 @@ export default function App() {
           </Table>
         </SimplePage>}
 
+
+        {page === "activities" && <SimplePage title="Field Activities" description="Plan and record irrigation, fertilizer, spraying, weeding, scouting and harvesting."
+          button="New activity" disabled={!fields.length} onAdd={() => open("activity")}>
+          <Table headers={["Activity","Field","Schedule","Status"]}>
+            {activities.map(a => <div className="table-row" key={a.id}>
+              <strong>{a.activity_type}</strong>
+              <span>{fieldName(a.field_id)}</span>
+              <span>{a.scheduled_date || "No date"}</span>
+              <span className="activity-status"><span className="pill">{a.status || "planned"}</span>
+                {a.status !== "completed" && <button className="small-action" onClick={() => completeActivity(a.id)}>Complete</button>}</span>
+            </div>)}
+            {!activities.length && <Empty text="No field activities yet."/>}
+          </Table>
+        </SimplePage>}
+
+        {page === "calendar" && <SimplePage title="Work Calendar" description="See upcoming and overdue farm work." button="Schedule activity" disabled={!fields.length} onAdd={() => open("activity")}>
+          <div className="calendar-list">
+            {activities.slice().sort((a,b)=>String(a.scheduled_date).localeCompare(String(b.scheduled_date))).map(a => {
+              const today = new Date().toISOString().slice(0,10);
+              const overdue = a.scheduled_date < today && a.status !== "completed";
+              return <article className={`calendar-item ${overdue ? "overdue" : ""}`} key={a.id}>
+                <div className="calendar-date"><strong>{a.scheduled_date || "—"}</strong><span>{overdue ? "Overdue" : a.status}</span></div>
+                <div className="calendar-main"><h3>{a.activity_type}</h3><p>{fieldName(a.field_id)} · {workerName(a.worker_id)}</p></div>
+                {a.status !== "completed" && <button className="small-action" onClick={() => completeActivity(a.id)}>Complete</button>}
+              </article>
+            })}
+            {!activities.length && <Empty text="No scheduled work yet."/>}
+          </div>
+        </SimplePage>}
+
+        {page === "workers" && <SimplePage title="Workers" description="Maintain labour records and daily rates." button="Add worker" onAdd={() => open("worker")}>
+          <Table headers={["Worker","Role","Daily rate","Status"]}>
+            {workers.map(w => <div className="table-row" key={w.id}>
+              <strong>{w.full_name}</strong><span>{w.role || "Worker"}</span>
+              <span>{Number(w.daily_rate || 0).toLocaleString()} </span><span className="pill">{w.status || "active"}</span>
+            </div>)}
+            {!workers.length && <Empty text="No workers added yet."/>}
+          </Table>
+        </SimplePage>}
+
         {["irrigation","inventory","expenses","reports"].includes(page) && <ComingSoon page={page}/>}
       </main>
 
@@ -369,6 +498,46 @@ export default function App() {
             </div>
             <Field label="Notes"><textarea value={form.notes||""} onChange={e=>setForm({...form,notes:e.target.value})}/></Field>
           </>}
+
+          {modal === "activity" && <>
+            <div className="form-grid">
+              <Field label="Field"><select required value={form.field_id||""} onChange={e=>setForm({...form,field_id:e.target.value,crop_cycle_id:cycles.find(c=>c.field_id===e.target.value)?.id||""})}>{fields.map(f=><option key={f.id} value={f.id}>{f.name}</option>)}</select></Field>
+              <Field label="Crop cycle"><select value={form.crop_cycle_id||""} onChange={e=>setForm({...form,crop_cycle_id:e.target.value})}><option value="">No crop cycle</option>{cycles.filter(c=>c.field_id===form.field_id).map(c=><option key={c.id} value={c.id}>{c.crop_name}{c.variety ? " · "+c.variety : ""}</option>)}</select></Field>
+            </div>
+            <div className="form-grid">
+              <Field label="Activity type"><select value={form.activity_type||"irrigation"} onChange={e=>setForm({...form,activity_type:e.target.value})}>
+                {["land preparation","planting","transplanting","irrigation","fertilizer","spraying","weeding","scouting","harvesting","other"].map(x=><option key={x} value={x}>{x}</option>)}
+              </select></Field>
+              <Field label="Worker"><select value={form.worker_id||""} onChange={e=>setForm({...form,worker_id:e.target.value})}><option value="">Unassigned</option>{workers.map(w=><option key={w.id} value={w.id}>{w.full_name}</option>)}</select></Field>
+            </div>
+            <div className="form-grid">
+              <Field label="Scheduled date"><input required type="date" value={form.scheduled_date||""} onChange={e=>setForm({...form,scheduled_date:e.target.value})}/></Field>
+              <Field label="Status"><select value={form.status||"planned"} onChange={e=>setForm({...form,status:e.target.value})}><option value="planned">Planned</option><option value="in_progress">In progress</option><option value="completed">Completed</option><option value="cancelled">Cancelled</option></select></Field>
+            </div>
+            <div className="form-grid three">
+              <Field label="Input used"><input value={form.input_name||""} placeholder="NPK 17:17:17" onChange={e=>setForm({...form,input_name:e.target.value})}/></Field>
+              <Field label="Quantity"><input type="number" step="0.01" value={form.quantity||""} onChange={e=>setForm({...form,quantity:e.target.value})}/></Field>
+              <Field label="Unit"><input value={form.unit||""} placeholder="kg / litres" onChange={e=>setForm({...form,unit:e.target.value})}/></Field>
+            </div>
+            <div className="form-grid">
+              <Field label="Labour cost"><input type="number" step="0.01" value={form.labour_cost||""} onChange={e=>setForm({...form,labour_cost:e.target.value})}/></Field>
+              <Field label="Input cost"><input type="number" step="0.01" value={form.input_cost||""} onChange={e=>setForm({...form,input_cost:e.target.value})}/></Field>
+            </div>
+            <Field label="Notes"><textarea value={form.notes||""} onChange={e=>setForm({...form,notes:e.target.value})}/></Field>
+          </>}
+
+          {modal === "worker" && <>
+            <Field label="Full name"><input required value={form.full_name||""} onChange={e=>setForm({...form,full_name:e.target.value})}/></Field>
+            <div className="form-grid">
+              <Field label="Phone"><input value={form.phone||""} onChange={e=>setForm({...form,phone:e.target.value})}/></Field>
+              <Field label="Role"><input value={form.role||""} onChange={e=>setForm({...form,role:e.target.value})}/></Field>
+            </div>
+            <div className="form-grid">
+              <Field label="Daily rate"><input type="number" step="0.01" value={form.daily_rate||""} onChange={e=>setForm({...form,daily_rate:e.target.value})}/></Field>
+              <Field label="Status"><select value={form.status||"active"} onChange={e=>setForm({...form,status:e.target.value})}><option value="active">Active</option><option value="inactive">Inactive</option></select></Field>
+            </div>
+          </>}
+
           <div className="form-actions"><button type="button" className="button secondary" onClick={()=>setModal(null)}>Cancel</button><button className="button primary" disabled={saving}>{saving ? "Saving…" : "Save"}</button></div>
         </form>
       </Modal>}
@@ -381,7 +550,10 @@ function averageGermination(batches) {
   if (!valid.length) return "—";
   return Math.round(valid.reduce((s,b)=>s+(Number(b.germinated||0)/Number(b.seeds_sown)*100),0)/valid.length) + "%";
 }
-function modalTitle(type){return ({block:"Add farm block",field:"Add field",batch:"New propagation batch",cycle:"New crop cycle"})[type]}
+function modalTitle(type){return ({
+  block:"Add farm block",field:"Add field",batch:"New propagation batch",
+  cycle:"New crop cycle",activity:"New field activity",worker:"Add worker"
+})[type]}
 function StatusBanner({status,message}){const Icon=status==="success"?CheckCircle2:status==="loading"?LoaderCircle:AlertCircle;return message?<div className={`status-banner ${status}`}><Icon size={18} className={status==="loading"?"spin":""}/><span>{message}</span></div>:null}
 function Modal({title,children,onClose}){return <div className="overlay" onMouseDown={onClose}><section className="modal large" onMouseDown={e=>e.stopPropagation()}><header className="modal-header"><h2>{title}</h2><button className="icon-button" onClick={onClose}><X size={20}/></button></header>{children}</section></div>}
 function Stat({label,value,detail}){return <article className="stat-card"><span>{label}</span><strong>{value}</strong><small>{detail}</small></article>}

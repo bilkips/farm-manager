@@ -48,3 +48,9 @@ alter table public.propagation_batches
 update public.propagation_batches
 set batch_code='PB-' || to_char(coalesce(created_at,now()),'YYYYMMDDHH24MISS')
 where batch_code is null;
+
+
+-- V5.2 compatibility for the original crop_cycles schema.
+-- V5 stores the crop name and variety directly on each crop cycle.
+alter table public.crop_cycles
+  alter column crop_id drop not null;
