@@ -3,7 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import {
   AlertCircle, Blocks, CalendarDays, CheckCircle2, CircleDollarSign, ClipboardList,
   Droplets, Gauge, Home, Leaf, LoaderCircle, Menu, Package, Plus, RefreshCw,
-  ShoppingCart, Sprout, Tractor, Users, Warehouse, Wrench, X
+  Search, ShoppingCart, Sprout, Tractor, Users, Warehouse, Wrench, X
 } from "lucide-react";
 
 const SUPABASE_URL = "https://itlngocavjyrjgeblsmq.supabase.co";
@@ -114,6 +114,8 @@ export default function App() {
   const [harvests, setHarvests] = useState([]);
   const [equipment, setEquipment] = useState([]);
   const [timelineField, setTimelineField] = useState("");
+  const [searchTerm, setSearchTerm] = useState("");
+  const [inventoryFilter, setInventoryFilter] = useState("all");
   const [status, setStatus] = useState({ type: "loading", message: "Connecting to Supabase…" });
   const [modal, setModal] = useState(null);
   const [editingId, setEditingId] = useState(null);
@@ -224,6 +226,17 @@ export default function App() {
   };
   const equipmentName = id => equipment.find(e => e.id === id)?.name || "Not selected";
   const money = value => Number(value || 0).toLocaleString("en-US", { style: "currency", currency: "KES", maximumFractionDigits: 0 });
+  const matchesSearch = (...values) => {
+    const query = searchTerm.trim().toLowerCase();
+    return !query || values.some(value => String(value ?? "").toLowerCase().includes(query));
+  };
+  const serviceDue = equipment.filter(e => {
+    const today = new Date().toISOString().slice(0,10);
+    const dueByDate = e.next_service_date && e.next_service_date <= today;
+    const interval = Number(e.service_interval_hours || 0);
+    const hours = Number(e.current_hours || 0);
+    return e.status === "service due" || dueByDate || (interval > 0 && hours >= interval);
+  });
 
   function open(type) {
     setEditingId(null);
@@ -512,7 +525,7 @@ export default function App() {
           <button className="mobile-close" onClick={() => setMobileNav(false)}><X/></button>
         </div>
         <nav>{NAV.map(([id,label,Icon]) => (
-          <button key={id} className={page===id ? "active" : ""} onClick={() => {setPage(id);setMobileNav(false)}}>
+          <button key={id} className={page===id ? "active" : ""} onClick={() => {setPage(id);setSearchTerm("");setMobileNav(false)}}>
             <Icon size={19}/><span>{label}</span>
           </button>
         ))}</nav>
@@ -526,6 +539,10 @@ export default function App() {
         </header>
 
         <StatusBanner status={status.type} message={status.message}/>
+
+        {["blocks","fields","nursery","crops","activities","workers","irrigation","sprays","inventory","harvests","equipment"].includes(page) && <div className="module-toolbar">
+          <div className="search-box"><Search size={17}/><input value={searchTerm} onChange={e=>setSearchTerm(e.target.value)} placeholder="Search this section…"/>{searchTerm && <button onClick={()=>setSearchTerm("")}>Clear</button>}</div>
+        </div>}
 
         {page === "dashboard" && <>
           <section className="hero">
@@ -542,6 +559,12 @@ export default function App() {
             <Stat label="Activities today" value={metrics.dueToday} detail={`${metrics.overdue} overdue tasks`} onClick={() => setPage("calendar")}/>
             <Stat label="Low stock" value={metrics.lowStock} detail="Items at reorder level" onClick={() => setPage("inventory")}/>
             <Stat label="Revenue" value={money(metrics.revenue)} detail={`Profit ${money(metrics.profit)}`} onClick={() => setPage("expenses")}/>
+          </section>
+          <section className="alert-center">
+            <button className={metrics.overdue ? "alert-tile urgent" : "alert-tile"} onClick={()=>setPage("calendar")}><AlertCircle size={18}/><span><strong>{metrics.overdue}</strong> overdue activities</span></button>
+            <button className={metrics.ready ? "alert-tile attention" : "alert-tile"} onClick={()=>setPage("nursery")}><Sprout size={18}/><span><strong>{metrics.ready}</strong> batches ready</span></button>
+            <button className={metrics.lowStock ? "alert-tile attention" : "alert-tile"} onClick={()=>setPage("inventory")}><Package size={18}/><span><strong>{metrics.lowStock}</strong> low-stock items</span></button>
+            <button className={serviceDue.length ? "alert-tile urgent" : "alert-tile"} onClick={()=>setPage("equipment")}><Wrench size={18}/><span><strong>{serviceDue.length}</strong> service alerts</span></button>
           </section>
           <section className="split-grid">
             <Card title="Nursery batches" subtitle="Latest propagation activity" action="Open" onAction={() => setPage("nursery")}>
@@ -564,14 +587,14 @@ export default function App() {
 
         {page === "blocks" && <SimplePage title="Farm Blocks" description="Group fields into farm management areas." button="Add block" onAdd={() => open("block")}>
           <Table headers={["Name","Area","Fields","Status"]}>
-            {blocks.map(b => <div className="table-row" key={b.id}><strong>{b.name}</strong><span>{Number(b.area_acres||0)} acres</span>
+            {blocks.filter(b=>matchesSearch(b.name,b.notes)).map(b => <div className="table-row" key={b.id}><strong>{b.name}</strong><span>{Number(b.area_acres||0)} acres</span>
               <span>{fields.filter(f=>f.farm_block_id===b.id).length}</span><span className="row-actions"><span className="pill">Active</span><button className="small-action" onClick={() => edit("block", b)}>Edit</button><button className="small-action danger-action" onClick={() => deleteItem("farm_blocks", b.id, `farm block ${b.name}`)}>Delete</button></span></div>)}
           </Table>
         </SimplePage>}
 
         {page === "fields" && <SimplePage title="Fields" description="Manage individual production units." button="Add field" disabled={!blocks.length} onAdd={() => open("field")}>
           <Table headers={["Name","Block","Area","Status"]}>
-            {fields.map(f => <div className="table-row" key={f.id}><strong>{f.name}</strong><span>{blockName(f.farm_block_id)}</span>
+            {fields.filter(f=>matchesSearch(f.name,f.status,blockName(f.farm_block_id))).map(f => <div className="table-row" key={f.id}><strong>{f.name}</strong><span>{blockName(f.farm_block_id)}</span>
               <span>{Number(f.area_acres||0)} acres</span><span className="row-actions"><span className="pill">{f.status||"available"}</span><button className="small-action" onClick={() => edit("field", f)}>Edit</button><button className="small-action danger-action" onClick={() => deleteItem("fields", f.id, `field ${f.name}`)}>Delete</button></span></div>)}
           </Table>
         </SimplePage>}
@@ -583,7 +606,7 @@ export default function App() {
             <Mini label="Ready" value={metrics.ready}/><Mini label="Average germination" value={averageGermination(batches)}/>
           </section>
           <div className="batch-grid">
-            {batches.map(b => {
+            {batches.filter(b=>matchesSearch(b.crop_name,b.variety,b.batch_code,b.status)).map(b => {
               const live = Math.max(0, Number(b.germinated||0)-Number(b.losses||0));
               const rate = Number(b.seeds_sown||0) ? Math.round(Number(b.germinated||0)/Number(b.seeds_sown)*100) : 0;
               return <article className="batch-card" key={b.id}>
@@ -607,7 +630,7 @@ export default function App() {
         {page === "crops" && <SimplePage title="Crop Cycles" description="Connect transplanted seedlings or direct planting to a specific field."
           button="New crop cycle" disabled={!fields.length} onAdd={() => open("cycle")}>
           <Table headers={["Crop","Field","Source","Status"]}>
-            {cycles.map(c => <div className="table-row" key={c.id}>
+            {cycles.filter(c=>matchesSearch(c.crop_name,c.variety,c.status,fieldName(c.field_id))).map(c => <div className="table-row" key={c.id}>
               <strong>{c.crop_name}{c.variety ? " · "+c.variety : ""}</strong><span>{fieldName(c.field_id)}</span>
               <span>{batchName(c.source_batch_id)}</span><span className="row-actions"><span className="pill">{c.status||"planned"}</span><button className="small-action" onClick={() => edit("cycle", c)}>Edit</button><button className="small-action danger-action" onClick={() => deleteItem("crop_cycles", c.id, `crop cycle ${c.crop_name}`)}>Delete</button></span>
             </div>)}
@@ -618,7 +641,7 @@ export default function App() {
         {page === "activities" && <SimplePage title="Field Activities" description="Plan and record irrigation, fertilizer, spraying, weeding, scouting and harvesting."
           button="New activity" disabled={!fields.length} onAdd={() => open("activity")}>
           <Table headers={["Activity","Field","Schedule","Status"]}>
-            {activities.map(a => <div className="table-row" key={a.id}>
+            {activities.filter(a=>matchesSearch(a.activity_type,a.status,a.notes,fieldName(a.field_id))).map(a => <div className="table-row" key={a.id}>
               <strong>{a.activity_type}</strong>
               <span>{fieldName(a.field_id)}</span>
               <span>{a.scheduled_date || "No date"}</span>
@@ -648,7 +671,7 @@ export default function App() {
 
         {page === "workers" && <SimplePage title="Workers" description="Maintain labour records and daily rates." button="Add worker" onAdd={() => open("worker")}>
           <Table headers={["Worker","Role","Daily rate","Status"]}>
-            {workers.map(w => <div className="table-row" key={w.id}>
+            {workers.filter(w=>matchesSearch(w.full_name,w.phone,w.role,w.status)).map(w => <div className="table-row" key={w.id}>
               <strong>{w.full_name}</strong><span>{w.role || "Worker"}</span>
               <span>{Number(w.daily_rate || 0).toLocaleString()} </span><span className="row-actions"><span className="pill">{w.status || "active"}</span><button className="small-action" onClick={() => edit("worker", w)}>Edit</button><button className="small-action danger-action" onClick={() => deleteItem("workers", w.id, `worker ${w.full_name}`)}>Delete</button></span>
             </div>)}
@@ -659,22 +682,23 @@ export default function App() {
 
         {page === "irrigation" && <SimplePage title="Irrigation Management" description="Track water, pressure, duration, fuel and equipment by field." button="Add irrigation" disabled={!fields.length} onAdd={() => open("irrigation")}>
           <Table headers={["Date / Field","System","Water & pressure","Actions"]}>
-            {irrigation.map(r=><div className="table-row" key={r.id}><strong>{r.irrigation_date}<small>{fieldName(r.field_id)}</small></strong><span>{r.system_type}<small>{equipmentName(r.equipment_id)}</small></span><span>{r.duration_hours||0} hr · {r.pressure_bar||0} bar<small>{r.water_source}</small></span><span className="row-actions"><button className="small-action" onClick={()=>edit("irrigation",r)}>Edit</button><button className="small-action danger-action" onClick={()=>deleteItem("irrigation_records",r.id,"irrigation record")}>Delete</button></span></div>)}
+            {irrigation.filter(r=>matchesSearch(r.irrigation_date,r.system_type,r.water_source,fieldName(r.field_id),equipmentName(r.equipment_id))).map(r=><div className="table-row" key={r.id}><strong>{r.irrigation_date}<small>{fieldName(r.field_id)}</small></strong><span>{r.system_type}<small>{equipmentName(r.equipment_id)}</small></span><span>{r.duration_hours||0} hr · {r.pressure_bar||0} bar<small>{r.water_source}</small></span><span className="row-actions"><button className="small-action" onClick={()=>edit("irrigation",r)}>Edit</button><button className="small-action danger-action" onClick={()=>deleteItem("irrigation_records",r.id,"irrigation record")}>Delete</button></span></div>)}
             {!irrigation.length&&<Empty text="No irrigation records yet."/>}
           </Table>
         </SimplePage>}
 
         {page === "sprays" && <SimplePage title="Spray Records" description="Maintain traceable pesticide and foliar application records." button="Add spray" disabled={!fields.length} onAdd={() => open("spray")}>
           <Table headers={["Date / Field","Product","Safety","Actions"]}>
-            {sprays.map(r=><div className="table-row" key={r.id}><strong>{r.spray_date}<small>{fieldName(r.field_id)}</small></strong><span>{r.product_name}<small>{r.target_problem||r.active_ingredient||"—"}</small></span><span>PHI {r.phi_days||0} days<small>REI {r.rei_hours||0} hours</small></span><span className="row-actions"><button className="small-action" onClick={()=>edit("spray",r)}>Edit</button><button className="small-action danger-action" onClick={()=>deleteItem("spray_records",r.id,"spray record")}>Delete</button></span></div>)}
+            {sprays.filter(r=>matchesSearch(r.spray_date,r.product_name,r.active_ingredient,r.target_problem,fieldName(r.field_id))).map(r=><div className="table-row" key={r.id}><strong>{r.spray_date}<small>{fieldName(r.field_id)}</small></strong><span>{r.product_name}<small>{r.target_problem||r.active_ingredient||"—"}</small></span><span>PHI {r.phi_days||0} days<small>REI {r.rei_hours||0} hours</small></span><span className="row-actions"><button className="small-action" onClick={()=>edit("spray",r)}>Edit</button><button className="small-action danger-action" onClick={()=>deleteItem("spray_records",r.id,"spray record")}>Delete</button></span></div>)}
             {!sprays.length&&<Empty text="No spray records yet."/>}
           </Table>
         </SimplePage>}
 
         {page === "inventory" && <SimplePage title="Inventory" description="Track fertilizer, chemicals, seed, fuel and spare parts." button="Add item" onAdd={() => open("inventory")}>
           <div className="summary-strip"><strong>{inventory.length} items</strong><span>{metrics.lowStock} low-stock alerts</span><span>Stock value {money(inventory.reduce((s,i)=>s+Number(i.quantity_on_hand||0)*Number(i.unit_cost||0),0))}</span></div>
+          <div className="filter-tabs"><button className={inventoryFilter==="all"?"active":""} onClick={()=>setInventoryFilter("all")}>All</button><button className={inventoryFilter==="low"?"active":""} onClick={()=>setInventoryFilter("low")}>Low stock</button>{["Seed","Fertilizer","Chemical","Fuel","Spare part"].map(x=><button key={x} className={inventoryFilter===x?"active":""} onClick={()=>setInventoryFilter(x)}>{x}</button>)}</div>
           <Table headers={["Item","Stock","Value","Actions"]}>
-            {inventory.map(i=><div className={`table-row ${Number(i.quantity_on_hand||0)<=Number(i.reorder_level||0)?"low-stock":""}`} key={i.id}><strong>{i.item_name}<small>{i.category}</small></strong><span>{i.quantity_on_hand||0} {i.unit}<small>Reorder at {i.reorder_level||0}</small></span><span>{money(Number(i.quantity_on_hand||0)*Number(i.unit_cost||0))}</span><span className="row-actions"><button className="small-action" onClick={()=>edit("inventory",i)}>Edit</button><button className="small-action danger-action" onClick={()=>deleteItem("inventory_items",i.id,`inventory item ${i.item_name}`)}>Delete</button></span></div>)}
+            {inventory.filter(i => (inventoryFilter==="all" || (inventoryFilter==="low" && Number(i.quantity_on_hand||0)<=Number(i.reorder_level||0)) || i.category===inventoryFilter) && matchesSearch(i.item_name,i.category,i.supplier)).map(i=><div className={`table-row ${Number(i.quantity_on_hand||0)<=Number(i.reorder_level||0)?"low-stock":""}`} key={i.id}><strong>{i.item_name}<small>{i.category}</small></strong><span>{i.quantity_on_hand||0} {i.unit}<small>Reorder at {i.reorder_level||0}</small></span><span>{money(Number(i.quantity_on_hand||0)*Number(i.unit_cost||0))}</span><span className="row-actions"><button className="small-action" onClick={()=>edit("inventory",i)}>Edit</button><button className="small-action danger-action" onClick={()=>deleteItem("inventory_items",i.id,`inventory item ${i.item_name}`)}>Delete</button></span></div>)}
             {!inventory.length&&<Empty text="No inventory items yet."/>}
           </Table>
         </SimplePage>}
@@ -682,14 +706,14 @@ export default function App() {
         {page === "harvests" && <SimplePage title="Harvest & Sales" description="Record yield, grades, buyers, waste and revenue." button="Add harvest" disabled={!fields.length} onAdd={() => open("harvest")}>
           <div className="summary-strip"><strong>Revenue {money(metrics.revenue)}</strong><span>{harvests.reduce((s,h)=>s+Number(h.quantity||0),0).toLocaleString()} total units</span></div>
           <Table headers={["Date / Field","Harvest","Buyer","Actions"]}>
-            {harvests.map(h=><div className="table-row" key={h.id}><strong>{h.harvest_date}<small>{fieldName(h.field_id)} · Grade {h.grade}</small></strong><span>{h.quantity||0} {h.unit}<small>Waste {h.waste_quantity||0}</small></span><span>{h.buyer||"No buyer"}<small>{money(Number(h.quantity||0)*Number(h.price_per_unit||0))}</small></span><span className="row-actions"><button className="small-action" onClick={()=>edit("harvest",h)}>Edit</button><button className="small-action danger-action" onClick={()=>deleteItem("harvest_records",h.id,"harvest record")}>Delete</button></span></div>)}
+            {harvests.filter(h=>matchesSearch(h.harvest_date,h.grade,h.buyer,fieldName(h.field_id))).map(h=><div className="table-row" key={h.id}><strong>{h.harvest_date}<small>{fieldName(h.field_id)} · Grade {h.grade}</small></strong><span>{h.quantity||0} {h.unit}<small>Waste {h.waste_quantity||0}</small></span><span>{h.buyer||"No buyer"}<small>{money(Number(h.quantity||0)*Number(h.price_per_unit||0))}</small></span><span className="row-actions"><button className="small-action" onClick={()=>edit("harvest",h)}>Edit</button><button className="small-action danger-action" onClick={()=>deleteItem("harvest_records",h.id,"harvest record")}>Delete</button></span></div>)}
             {!harvests.length&&<Empty text="No harvest records yet."/>}
           </Table>
         </SimplePage>}
 
         {page === "equipment" && <SimplePage title="Equipment" description="Track pumps, engines, reels and service dates." button="Add equipment" onAdd={() => open("equipment")}>
           <Table headers={["Equipment","Hours","Service","Actions"]}>
-            {equipment.map(e=><div className="table-row" key={e.id}><strong>{e.name}<small>{e.category} · {e.model||"No model"}</small></strong><span>{e.current_hours||0} hr<small>Interval {e.service_interval_hours||0} hr</small></span><span>{e.next_service_date||"Not scheduled"}<small>{e.status}</small></span><span className="row-actions"><button className="small-action" onClick={()=>edit("equipment",e)}>Edit</button><button className="small-action danger-action" onClick={()=>deleteItem("equipment",e.id,`equipment ${e.name}`)}>Delete</button></span></div>)}
+            {equipment.filter(e=>matchesSearch(e.name,e.category,e.model,e.status)).map(e=><div className={`table-row ${serviceDue.some(x=>x.id===e.id)?"service-alert":""}`} key={e.id}><strong>{e.name}<small>{e.category} · {e.model||"No model"}</small></strong><span>{e.current_hours||0} hr<small>Interval {e.service_interval_hours||0} hr</small></span><span>{e.next_service_date||"Not scheduled"}<small>{serviceDue.some(x=>x.id===e.id)?"Service due":e.status}</small></span><span className="row-actions"><button className="small-action" onClick={()=>edit("equipment",e)}>Edit</button><button className="small-action danger-action" onClick={()=>deleteItem("equipment",e.id,`equipment ${e.name}`)}>Delete</button></span></div>)}
             {!equipment.length&&<Empty text="No equipment records yet."/>}
           </Table>
         </SimplePage>}

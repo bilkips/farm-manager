@@ -1,18 +1,17 @@
-# Farm Manager V7 Mobile Edition
+# Farm Manager V7.1
 
-V7 adds:
-- Irrigation records: system, equipment, water source, duration, pressure, water volume, fuel and cost
-- Spray records: product, active ingredient, target, dose, PHI, REI, weather and applicator
-- Inventory with stock value and low-stock alerts
-- Harvest and sales with grades, waste, buyers and revenue
-- Equipment and maintenance records
-- Financial dashboard with recorded costs, revenue and estimated profit
-- Complete field timeline combining crop cycles, activities, irrigation, sprays and harvests
-- Full add, edit and delete support for all V7 records
+## New
+- Search across major modules
+- Clickable dashboard alert centre
+- Overdue activity, nursery-ready, low-stock and service alerts
+- Inventory category and low-stock filters
+- Service-due equipment highlighting
+- Database performance indexes
 
-## Upgrade steps
-1. Run `database-v7-upgrade.sql` in Supabase SQL Editor.
-2. Extract the ZIP.
-3. Upload all extracted files to the root of the existing GitHub repository.
-4. Replace existing files and commit.
-5. Netlify will redeploy automatically.
+## Install
+1. Run `database-v7-1-upgrade.sql` in Supabase SQL Editor.
+2. Upload all extracted files to your GitHub repository root.
+3. Replace existing files and commit.
+4. Netlify redeploys automatically.
+
+Existing V7.0 data is preserved.
