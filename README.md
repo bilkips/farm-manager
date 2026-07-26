@@ -1,20 +1,11 @@
-# Farm Manager V5 Mobile Edition
+# Farm Manager V5.1
 
-V5 adds:
-- Nursery and seed propagation batches
-- Germination and seedling-loss tracking
-- Transplant-readiness status
-- Crop cycles linked to fields
-- Optional nursery-batch-to-crop-cycle traceability
-- Live dashboard nursery metrics
+Fixes:
+- Propagation batch window scrolls on Android.
+- Save and Cancel remain accessible.
+- Required batch_code is generated automatically.
 
-## Upgrade steps
-
-1. Open Supabase SQL Editor.
-2. Run `database-upgrade.sql`.
-3. Extract this ZIP.
-4. Upload every extracted file directly to the root of the existing GitHub repository.
-5. Replace the existing files when GitHub asks.
-6. Commit the upload. Netlify will deploy automatically.
-
-No `src` folder is required.
+Steps:
+1. Run database-upgrade.sql in Supabase SQL Editor.
+2. Upload all extracted files to the root of GitHub.
+3. Replace old files and commit.

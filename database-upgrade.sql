@@ -42,3 +42,9 @@ drop policy if exists "public update crop cycles" on public.crop_cycles;
 create policy "public read crop cycles" on public.crop_cycles for select to anon using (true);
 create policy "public insert crop cycles" on public.crop_cycles for insert to anon with check (true);
 create policy "public update crop cycles" on public.crop_cycles for update to anon using (true) with check (true);
+
+alter table public.propagation_batches
+  alter column batch_code set default ('PB-' || to_char(now(),'YYYYMMDDHH24MISS'));
+update public.propagation_batches
+set batch_code='PB-' || to_char(coalesce(created_at,now()),'YYYYMMDDHH24MISS')
+where batch_code is null;

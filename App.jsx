@@ -154,7 +154,9 @@ export default function App() {
       if (modal === "batch") {
         const calculatedSeeds = Number(form.seeds_sown || 0) ||
           (Number(form.trays || 0) * Number(form.cells_per_tray || 0));
+        const batchCode = `PB-${String(form.sowing_date || "").replaceAll("-","")}-${Date.now().toString().slice(-5)}`;
         const { error } = await supabase.from("propagation_batches").insert({
+          batch_code: batchCode,
           farm_id: farm.id,
           crop_name: form.crop_name.trim(),
           variety: form.variety.trim() || null,
