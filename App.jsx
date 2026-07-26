@@ -76,6 +76,7 @@ export default function App() {
   const [workers, setWorkers] = useState([]);
   const [status, setStatus] = useState({ type: "loading", message: "Connecting to Supabase…" });
   const [modal, setModal] = useState(null);
+  const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
 
@@ -161,6 +162,7 @@ export default function App() {
   };
 
   function open(type) {
+    setEditingId(null);
     if (type === "block") setForm(emptyBlock);
     if (type === "field") setForm({ ...emptyField, blockId: blocks[0]?.id || "" });
     if (type === "batch") setForm(emptyBatch);
@@ -180,29 +182,72 @@ export default function App() {
     setModal(type);
   }
 
+  function edit(type, item) {
+    setEditingId(item.id);
+    if (type === "block") setForm({ name: item.name || "", area: item.area_acres || "" });
+    if (type === "field") setForm({
+      name: item.name || "", area: item.area_acres || "",
+      blockId: item.farm_block_id || "", status: item.status || "available"
+    });
+    if (type === "batch") setForm({
+      crop_name: item.crop_name || "", variety: item.variety || "",
+      sowing_date: item.sowing_date || "", trays: item.trays || "",
+      cells_per_tray: item.cells_per_tray || "", seeds_sown: item.seeds_sown || "",
+      germinated: item.germinated || "", losses: item.losses || "0",
+      expected_transplant_date: item.expected_transplant_date || "",
+      status: item.status || "sown", notes: item.notes || ""
+    });
+    if (type === "cycle") setForm({
+      field_id: item.field_id || "", crop_name: item.crop_name || "",
+      variety: item.variety || "", source_batch_id: item.source_batch_id || "",
+      planting_date: item.planting_date || "",
+      expected_harvest_date: item.expected_harvest_date || "",
+      status: item.status || "planned", area_acres: item.area_acres || "",
+      notes: item.notes || ""
+    });
+    if (type === "activity") setForm({
+      field_id: item.field_id || "", crop_cycle_id: item.crop_cycle_id || "",
+      activity_type: item.activity_type || "irrigation",
+      scheduled_date: item.scheduled_date || "", completed_date: item.completed_date || "",
+      status: item.status || "planned", worker_id: item.worker_id || "",
+      input_name: item.input_name || "", quantity: item.quantity || "",
+      unit: item.unit || "", labour_cost: item.labour_cost || "",
+      input_cost: item.input_cost || "", notes: item.notes || ""
+    });
+    if (type === "worker") setForm({
+      full_name: item.full_name || "", phone: item.phone || "",
+      role: item.role || "", daily_rate: item.daily_rate || "",
+      status: item.status || "active"
+    });
+    setModal(type);
+  }
+
   async function save(event) {
     event.preventDefault();
     setSaving(true);
     try {
       if (modal === "block") {
-        const { error } = await supabase.from("farm_blocks").insert({
-          farm_id: farm.id, name: form.name.trim(), area_acres: Number(form.area)
-        });
+        const payload = { farm_id: farm.id, name: form.name.trim(), area_acres: Number(form.area) };
+        const { error } = editingId
+          ? await supabase.from("farm_blocks").update(payload).eq("id", editingId)
+          : await supabase.from("farm_blocks").insert(payload);
         if (error) throw error;
       }
       if (modal === "field") {
-        const { error } = await supabase.from("fields").insert({
+        const payload = {
           farm_block_id: form.blockId, name: form.name.trim(),
           area_acres: Number(form.area), status: form.status
-        });
+        };
+        const { error } = editingId
+          ? await supabase.from("fields").update(payload).eq("id", editingId)
+          : await supabase.from("fields").insert(payload);
         if (error) throw error;
       }
       if (modal === "batch") {
         const calculatedSeeds = Number(form.seeds_sown || 0) ||
           (Number(form.trays || 0) * Number(form.cells_per_tray || 0));
         const batchCode = `PB-${String(form.sowing_date || "").replaceAll("-","")}-${Date.now().toString().slice(-5)}`;
-        const { error } = await supabase.from("propagation_batches").insert({
-          batch_code: batchCode,
+        const payload = {
           farm_id: farm.id,
           crop_name: form.crop_name.trim(),
           variety: form.variety.trim() || null,
@@ -215,11 +260,15 @@ export default function App() {
           expected_transplant_date: form.expected_transplant_date || null,
           status: form.status,
           notes: form.notes.trim() || null
-        });
+        };
+        if (!editingId) payload.batch_code = batchCode;
+        const { error } = editingId
+          ? await supabase.from("propagation_batches").update(payload).eq("id", editingId)
+          : await supabase.from("propagation_batches").insert(payload);
         if (error) throw error;
       }
       if (modal === "cycle") {
-        const { error } = await supabase.from("crop_cycles").insert({
+        const payload = {
           field_id: form.field_id,
           crop_name: form.crop_name.trim(),
           variety: form.variety.trim() || null,
@@ -229,11 +278,14 @@ export default function App() {
           status: form.status,
           area_acres: Number(form.area_acres || 0),
           notes: form.notes.trim() || null
-        });
+        };
+        const { error } = editingId
+          ? await supabase.from("crop_cycles").update(payload).eq("id", editingId)
+          : await supabase.from("crop_cycles").insert(payload);
         if (error) throw error;
       }
       if (modal === "activity") {
-        const { error } = await supabase.from("field_activities").insert({
+        const payload = {
           farm_id: farm.id,
           field_id: form.field_id,
           crop_cycle_id: form.crop_cycle_id || null,
@@ -248,21 +300,28 @@ export default function App() {
           labour_cost: Number(form.labour_cost || 0),
           input_cost: Number(form.input_cost || 0),
           notes: form.notes.trim() || null
-        });
+        };
+        const { error } = editingId
+          ? await supabase.from("field_activities").update(payload).eq("id", editingId)
+          : await supabase.from("field_activities").insert(payload);
         if (error) throw error;
       }
       if (modal === "worker") {
-        const { error } = await supabase.from("workers").insert({
+        const payload = {
           farm_id: farm.id,
           full_name: form.full_name.trim(),
           phone: form.phone.trim() || null,
           role: form.role.trim() || null,
           daily_rate: Number(form.daily_rate || 0),
           status: form.status
-        });
+        };
+        const { error } = editingId
+          ? await supabase.from("workers").update(payload).eq("id", editingId)
+          : await supabase.from("workers").insert(payload);
         if (error) throw error;
       }
       setModal(null);
+      setEditingId(null);
       await loadData();
     } catch (error) {
       setStatus({ type: "error", message: friendlyError(error) });
@@ -354,14 +413,14 @@ export default function App() {
         {page === "blocks" && <SimplePage title="Farm Blocks" description="Group fields into farm management areas." button="Add block" onAdd={() => open("block")}>
           <Table headers={["Name","Area","Fields","Status"]}>
             {blocks.map(b => <div className="table-row" key={b.id}><strong>{b.name}</strong><span>{Number(b.area_acres||0)} acres</span>
-              <span>{fields.filter(f=>f.farm_block_id===b.id).length}</span><span className="pill">Active</span></div>)}
+              <span>{fields.filter(f=>f.farm_block_id===b.id).length}</span><span className="row-actions"><span className="pill">Active</span><button className="small-action" onClick={() => edit("block", b)}>Edit</button></span></div>)}
           </Table>
         </SimplePage>}
 
         {page === "fields" && <SimplePage title="Fields" description="Manage individual production units." button="Add field" disabled={!blocks.length} onAdd={() => open("field")}>
           <Table headers={["Name","Block","Area","Status"]}>
             {fields.map(f => <div className="table-row" key={f.id}><strong>{f.name}</strong><span>{blockName(f.farm_block_id)}</span>
-              <span>{Number(f.area_acres||0)} acres</span><span className="pill">{f.status||"available"}</span></div>)}
+              <span>{Number(f.area_acres||0)} acres</span><span className="row-actions"><span className="pill">{f.status||"available"}</span><button className="small-action" onClick={() => edit("field", f)}>Edit</button></span></div>)}
           </Table>
         </SimplePage>}
 
@@ -382,6 +441,7 @@ export default function App() {
                   <div><b>{rate}%</b><span>Germination</span></div></div>
                 <p>Expected transplant: {b.expected_transplant_date || "Not set"}</p>
                 <div className="batch-actions">
+                  <button onClick={() => edit("batch", b)}>Edit</button>
                   {b.status !== "ready" && <button onClick={() => updateBatchStatus(b.id,"ready")}>Mark ready</button>}
                   {b.status === "ready" && <button onClick={() => { setPage("crops"); open("cycle"); setForm(v => ({...v, source_batch_id:b.id, crop_name:b.crop_name, variety:b.variety||""})) }}>Transplant</button>}
                 </div>
@@ -396,7 +456,7 @@ export default function App() {
           <Table headers={["Crop","Field","Source","Status"]}>
             {cycles.map(c => <div className="table-row" key={c.id}>
               <strong>{c.crop_name}{c.variety ? " · "+c.variety : ""}</strong><span>{fieldName(c.field_id)}</span>
-              <span>{batchName(c.source_batch_id)}</span><span className="pill">{c.status||"planned"}</span>
+              <span>{batchName(c.source_batch_id)}</span><span className="row-actions"><span className="pill">{c.status||"planned"}</span><button className="small-action" onClick={() => edit("cycle", c)}>Edit</button></span>
             </div>)}
           </Table>
         </SimplePage>}
@@ -410,6 +470,7 @@ export default function App() {
               <span>{fieldName(a.field_id)}</span>
               <span>{a.scheduled_date || "No date"}</span>
               <span className="activity-status"><span className="pill">{a.status || "planned"}</span>
+                <button className="small-action" onClick={() => edit("activity", a)}>Edit</button>
                 {a.status !== "completed" && <button className="small-action" onClick={() => completeActivity(a.id)}>Complete</button>}</span>
             </div>)}
             {!activities.length && <Empty text="No field activities yet."/>}
@@ -435,7 +496,7 @@ export default function App() {
           <Table headers={["Worker","Role","Daily rate","Status"]}>
             {workers.map(w => <div className="table-row" key={w.id}>
               <strong>{w.full_name}</strong><span>{w.role || "Worker"}</span>
-              <span>{Number(w.daily_rate || 0).toLocaleString()} </span><span className="pill">{w.status || "active"}</span>
+              <span>{Number(w.daily_rate || 0).toLocaleString()} </span><span className="row-actions"><span className="pill">{w.status || "active"}</span><button className="small-action" onClick={() => edit("worker", w)}>Edit</button></span>
             </div>)}
             {!workers.length && <Empty text="No workers added yet."/>}
           </Table>
@@ -446,7 +507,7 @@ export default function App() {
 
       {mobileNav && <div className="sidebar-backdrop" onClick={() => setMobileNav(false)}/>}
 
-      {modal && <Modal title={modalTitle(modal)} onClose={() => setModal(null)}>
+      {modal && <Modal title={`${editingId ? "Edit" : "Add"} ${modalLabel(modal)}`} onClose={() => { setModal(null); setEditingId(null); }}>
         <form className="form" onSubmit={save}>
           {modal === "block" && <>
             <Field label="Block name"><input required value={form.name||""} onChange={e=>setForm({...form,name:e.target.value})}/></Field>
@@ -538,7 +599,7 @@ export default function App() {
             </div>
           </>}
 
-          <div className="form-actions"><button type="button" className="button secondary" onClick={()=>setModal(null)}>Cancel</button><button className="button primary" disabled={saving}>{saving ? "Saving…" : "Save"}</button></div>
+          <div className="form-actions"><button type="button" className="button secondary" onClick={()=>{setModal(null);setEditingId(null)}}>Cancel</button><button className="button primary" disabled={saving}>{saving ? "Saving…" : (editingId ? "Update" : "Save")}</button></div>
         </form>
       </Modal>}
     </div>
@@ -550,16 +611,16 @@ function averageGermination(batches) {
   if (!valid.length) return "—";
   return Math.round(valid.reduce((s,b)=>s+(Number(b.germinated||0)/Number(b.seeds_sown)*100),0)/valid.length) + "%";
 }
-function modalTitle(type){return ({
-  block:"Add farm block",field:"Add field",batch:"New propagation batch",
-  cycle:"New crop cycle",activity:"New field activity",worker:"Add worker"
+function modalLabel(type){return ({
+  block:"farm block",field:"field",batch:"propagation batch",
+  cycle:"crop cycle",activity:"field activity",worker:"worker"
 })[type]}
 function StatusBanner({status,message}){const Icon=status==="success"?CheckCircle2:status==="loading"?LoaderCircle:AlertCircle;return message?<div className={`status-banner ${status}`}><Icon size={18} className={status==="loading"?"spin":""}/><span>{message}</span></div>:null}
 function Modal({title,children,onClose}){return <div className="overlay" onMouseDown={onClose}><section className="modal large" onMouseDown={e=>e.stopPropagation()}><header className="modal-header"><h2>{title}</h2><button className="icon-button" onClick={onClose}><X size={20}/></button></header>{children}</section></div>}
 function Stat({label,value,detail}){return <article className="stat-card"><span>{label}</span><strong>{value}</strong><small>{detail}</small></article>}
 function Mini({label,value}){return <article className="mini"><strong>{value}</strong><span>{label}</span></article>}
 function Card({title,subtitle,action,onAction,children}){return <section className="card"><header className="card-header"><div><h3>{title}</h3><p>{subtitle}</p></div>{action&&<button onClick={onAction}>{action}</button>}</header>{children}</section>}
-function Record({Icon,title,subtitle,badge}){return <div className="record"><div className="record-icon"><Icon size={18}/></div><div className="record-main"><strong>{title}</strong><span>{subtitle}</span></div><span className="pill">{badge}</span></div>}
+function Record({Icon,title,subtitle,badge,onEdit}){return <div className="record"><div className="record-icon"><Icon size={18}/></div><div className="record-main"><strong>{title}</strong><span>{subtitle}</span></div><span className="row-actions"><span className="pill">{badge}</span>{onEdit&&<button className="small-action" onClick={onEdit}>Edit</button>}</span></div>}
 function Empty({text}){return <div className="empty">{text}</div>}
 function SimplePage({title,description,button,onAdd,disabled,children}){return <><section className="hero"><div><h2>{title}</h2><p>{description}</p></div><button className="button primary" disabled={disabled} onClick={onAdd}><Plus size={17}/>{button}</button></section><section className="card">{children}</section></>}
 function Table({headers,children}){return <div className="data-table"><div className="table-row table-head">{headers.map(h=><span key={h}>{h}</span>)}</div>{children}</div>}
