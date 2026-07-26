@@ -1,18 +1,20 @@
-# Farm Manager V4 Mobile Edition
+# Farm Manager V5 Mobile Edition
 
-Upload every extracted file directly into the root of your GitHub repository.
-No src, components, or lib folders are required.
+V5 adds:
+- Nursery and seed propagation batches
+- Germination and seedling-loss tracking
+- Transplant-readiness status
+- Crop cycles linked to fields
+- Optional nursery-batch-to-crop-cycle traceability
+- Live dashboard nursery metrics
 
-Required files:
-- App.jsx
-- main.jsx
-- styles.css
-- index.html
-- package.json
-- vite.config.js
-- netlify.toml
-- database-policy.sql
+## Upgrade steps
 
-Netlify settings:
-- Build command: npm run build
-- Publish directory: dist
+1. Open Supabase SQL Editor.
+2. Run `database-upgrade.sql`.
+3. Extract this ZIP.
+4. Upload every extracted file directly to the root of the existing GitHub repository.
+5. Replace the existing files when GitHub asks.
+6. Commit the upload. Netlify will deploy automatically.
+
+No `src` folder is required.
