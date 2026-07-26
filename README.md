@@ -1,16 +1,18 @@
-# Farm Manager V6.2
+# Farm Manager V7 Mobile Edition
 
-Updates:
-- Delete farm blocks, fields, nursery batches, crop cycles, activities and workers
-- Confirmation before deletion
-- A nursery batch is automatically marked Transplanted after its linked crop cycle is created
-- Transplanted batches no longer appear as available nursery sources
-- Dashboard statistics link to their modules
-- Dashboard Nursery and Crop Cycle cards link to full pages
+V7 adds:
+- Irrigation records: system, equipment, water source, duration, pressure, water volume, fuel and cost
+- Spray records: product, active ingredient, target, dose, PHI, REI, weather and applicator
+- Inventory with stock value and low-stock alerts
+- Harvest and sales with grades, waste, buyers and revenue
+- Equipment and maintenance records
+- Financial dashboard with recorded costs, revenue and estimated profit
+- Complete field timeline combining crop cycles, activities, irrigation, sprays and harvests
+- Full add, edit and delete support for all V7 records
 
-## Upgrade
-
-1. Run `database-v6-2-delete.sql` in Supabase SQL Editor.
-2. Upload all extracted files to the root of GitHub.
-3. Replace existing files and commit.
-4. Netlify redeploys automatically.
+## Upgrade steps
+1. Run `database-v7-upgrade.sql` in Supabase SQL Editor.
+2. Extract the ZIP.
+3. Upload all extracted files to the root of the existing GitHub repository.
+4. Replace existing files and commit.
+5. Netlify will redeploy automatically.

@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 import {
   AlertCircle, Blocks, CalendarDays, CheckCircle2, CircleDollarSign, ClipboardList,
-  Droplets, Home, Leaf, LoaderCircle, Menu, Package, Plus, RefreshCw,
-  Sprout, Tractor, Users, Wrench, X
+  Droplets, Gauge, Home, Leaf, LoaderCircle, Menu, Package, Plus, RefreshCw,
+  ShoppingCart, Sprout, Tractor, Users, Warehouse, Wrench, X
 } from "lucide-react";
 
 const SUPABASE_URL = "https://itlngocavjyrjgeblsmq.supabase.co";
@@ -20,9 +20,12 @@ const NAV = [
   ["calendar", "Work Calendar", CalendarDays],
   ["workers", "Workers", Users],
   ["irrigation", "Irrigation", Droplets],
-  ["inventory", "Inventory", Package],
-  ["expenses", "Expenses", CircleDollarSign],
-  ["reports", "Reports", ClipboardList]
+  ["sprays", "Spray Records", Gauge],
+  ["inventory", "Inventory", Warehouse],
+  ["harvests", "Harvest & Sales", ShoppingCart],
+  ["equipment", "Equipment", Wrench],
+  ["expenses", "Financials", CircleDollarSign],
+  ["reports", "Field Timeline", ClipboardList]
 ];
 
 const emptyBlock = { name: "", area: "" };
@@ -50,6 +53,37 @@ const emptyWorker = {
   daily_rate: "", status: "active"
 };
 
+const emptyIrrigation = {
+  field_id: "", crop_cycle_id: "", irrigation_date: new Date().toISOString().slice(0,10),
+  water_source: "River", system_type: "Travelling reel", equipment_id: "",
+  start_time: "", end_time: "", duration_hours: "", pressure_bar: "",
+  water_volume_m3: "", fuel_litres: "", cost: "", notes: ""
+};
+
+const emptySpray = {
+  field_id: "", crop_cycle_id: "", spray_date: new Date().toISOString().slice(0,10),
+  product_name: "", active_ingredient: "", target_problem: "", dose: "", unit: "ml/L",
+  quantity_used: "", phi_days: "", rei_hours: "", weather: "", worker_id: "",
+  cost: "", notes: ""
+};
+
+const emptyInventory = {
+  item_name: "", category: "Fertilizer", unit: "kg", quantity_on_hand: "",
+  reorder_level: "", unit_cost: "", supplier: "", notes: ""
+};
+
+const emptyHarvest = {
+  field_id: "", crop_cycle_id: "", harvest_date: new Date().toISOString().slice(0,10),
+  grade: "A", quantity: "", unit: "kg", waste_quantity: "", buyer: "",
+  price_per_unit: "", notes: ""
+};
+
+const emptyEquipment = {
+  name: "", category: "Pump", model: "", serial_number: "", status: "active",
+  service_interval_hours: "", current_hours: "", last_service_date: "",
+  next_service_date: "", notes: ""
+};
+
 function friendlyError(error) {
   const message = error?.message || String(error);
   if (message.includes("row-level security")) {
@@ -74,6 +108,12 @@ export default function App() {
   const [cycles, setCycles] = useState([]);
   const [activities, setActivities] = useState([]);
   const [workers, setWorkers] = useState([]);
+  const [irrigation, setIrrigation] = useState([]);
+  const [sprays, setSprays] = useState([]);
+  const [inventory, setInventory] = useState([]);
+  const [harvests, setHarvests] = useState([]);
+  const [equipment, setEquipment] = useState([]);
+  const [timelineField, setTimelineField] = useState("");
   const [status, setStatus] = useState({ type: "loading", message: "Connecting to Supabase…" });
   const [modal, setModal] = useState(null);
   const [editingId, setEditingId] = useState(null);
@@ -124,13 +164,30 @@ export default function App() {
         .from("workers").select("*").eq("farm_id", activeFarm.id).order("full_name");
       if (workerError) throw workerError;
 
+      const queries = await Promise.all([
+        supabase.from("irrigation_records").select("*").eq("farm_id", activeFarm.id).order("irrigation_date", { ascending: false }),
+        supabase.from("spray_records").select("*").eq("farm_id", activeFarm.id).order("spray_date", { ascending: false }),
+        supabase.from("inventory_items").select("*").eq("farm_id", activeFarm.id).order("item_name"),
+        supabase.from("harvest_records").select("*").eq("farm_id", activeFarm.id).order("harvest_date", { ascending: false }),
+        supabase.from("equipment").select("*").eq("farm_id", activeFarm.id).order("name")
+      ]);
+      const firstError = queries.find(q => q.error)?.error;
+      if (firstError) throw firstError;
+      const [irrigationRows, sprayRows, inventoryRows, harvestRows, equipmentRows] = queries.map(q => q.data || []);
+
       setBlocks(blockRows || []);
       setFields(farmFields);
       setBatches(batchRows || []);
       setCycles((cycleRows || []).filter(c => fieldIds.has(c.field_id)));
       setActivities(activityRows || []);
       setWorkers(workerRows || []);
-      setStatus({ type: "success", message: "Connected to Supabase. Live V6 data loaded." });
+      setIrrigation(irrigationRows);
+      setSprays(sprayRows);
+      setInventory(inventoryRows);
+      setHarvests(harvestRows);
+      setEquipment(equipmentRows);
+      setTimelineField(v => v || farmFields[0]?.id || "");
+      setStatus({ type: "success", message: "Connected to Supabase. Live V7 data loaded." });
     } catch (error) {
       setStatus({ type: "error", message: friendlyError(error) });
     }
@@ -146,8 +203,13 @@ export default function App() {
     const today = new Date().toISOString().slice(0,10);
     const dueToday = activities.filter(a => a.scheduled_date === today && a.status !== "completed").length;
     const overdue = activities.filter(a => a.scheduled_date && a.scheduled_date < today && a.status !== "completed").length;
-    return { totalArea, activeFields, seedlings, ready, dueToday, overdue };
-  }, [fields, batches, activities]);
+    const lowStock = inventory.filter(i => Number(i.quantity_on_hand || 0) <= Number(i.reorder_level || 0)).length;
+    const revenue = harvests.reduce((s,h) => s + Number(h.quantity || 0) * Number(h.price_per_unit || 0), 0);
+    const fieldCosts = activities.reduce((s,a) => s + Number(a.labour_cost || 0) + Number(a.input_cost || 0), 0)
+      + irrigation.reduce((s,r) => s + Number(r.cost || 0), 0)
+      + sprays.reduce((s,r) => s + Number(r.cost || 0), 0);
+    return { totalArea, activeFields, seedlings, ready, dueToday, overdue, lowStock, revenue, fieldCosts, profit: revenue-fieldCosts };
+  }, [fields, batches, activities, inventory, harvests, irrigation, sprays]);
 
   const blockName = id => blocks.find(b => b.id === id)?.name || "Unknown block";
   const fieldName = id => fields.find(f => f.id === id)?.name || "Unknown field";
@@ -160,6 +222,8 @@ export default function App() {
     const c = cycles.find(x => x.id === id);
     return c ? `${c.crop_name}${c.variety ? " · " + c.variety : ""}` : "No crop cycle";
   };
+  const equipmentName = id => equipment.find(e => e.id === id)?.name || "Not selected";
+  const money = value => Number(value || 0).toLocaleString("en-US", { style: "currency", currency: "KES", maximumFractionDigits: 0 });
 
   function open(type) {
     setEditingId(null);
@@ -179,6 +243,11 @@ export default function App() {
       worker_id: workers[0]?.id || ""
     });
     if (type === "worker") setForm(emptyWorker);
+    if (type === "irrigation") setForm({ ...emptyIrrigation, field_id: fields[0]?.id || "", crop_cycle_id: cycles.find(c => c.field_id === fields[0]?.id)?.id || "", equipment_id: equipment[0]?.id || "" });
+    if (type === "spray") setForm({ ...emptySpray, field_id: fields[0]?.id || "", crop_cycle_id: cycles.find(c => c.field_id === fields[0]?.id)?.id || "", worker_id: workers[0]?.id || "" });
+    if (type === "inventory") setForm(emptyInventory);
+    if (type === "harvest") setForm({ ...emptyHarvest, field_id: fields[0]?.id || "", crop_cycle_id: cycles.find(c => c.field_id === fields[0]?.id)?.id || "" });
+    if (type === "equipment") setForm(emptyEquipment);
     setModal(type);
   }
 
@@ -219,6 +288,11 @@ export default function App() {
       role: item.role || "", daily_rate: item.daily_rate || "",
       status: item.status || "active"
     });
+    if (type === "irrigation") setForm({ ...emptyIrrigation, ...item });
+    if (type === "spray") setForm({ ...emptySpray, ...item });
+    if (type === "inventory") setForm({ ...emptyInventory, ...item });
+    if (type === "harvest") setForm({ ...emptyHarvest, ...item });
+    if (type === "equipment") setForm({ ...emptyEquipment, ...item });
     setModal(type);
   }
 
@@ -327,6 +401,48 @@ export default function App() {
           : await supabase.from("workers").insert(payload);
         if (error) throw error;
       }
+      if (modal === "irrigation") {
+        const payload = { farm_id:farm.id, field_id:form.field_id, crop_cycle_id:form.crop_cycle_id||null,
+          irrigation_date:form.irrigation_date, water_source:form.water_source, system_type:form.system_type,
+          equipment_id:form.equipment_id||null, start_time:form.start_time||null, end_time:form.end_time||null,
+          duration_hours:Number(form.duration_hours||0), pressure_bar:Number(form.pressure_bar||0),
+          water_volume_m3:Number(form.water_volume_m3||0), fuel_litres:Number(form.fuel_litres||0),
+          cost:Number(form.cost||0), notes:form.notes?.trim()||null };
+        const {error}=editingId?await supabase.from("irrigation_records").update(payload).eq("id",editingId):await supabase.from("irrigation_records").insert(payload);
+        if(error) throw error;
+      }
+      if (modal === "spray") {
+        const payload = { farm_id:farm.id, field_id:form.field_id, crop_cycle_id:form.crop_cycle_id||null,
+          spray_date:form.spray_date, product_name:form.product_name.trim(), active_ingredient:form.active_ingredient?.trim()||null,
+          target_problem:form.target_problem?.trim()||null, dose:form.dose?.trim()||null, unit:form.unit?.trim()||null,
+          quantity_used:Number(form.quantity_used||0), phi_days:Number(form.phi_days||0), rei_hours:Number(form.rei_hours||0),
+          weather:form.weather?.trim()||null, worker_id:form.worker_id||null, cost:Number(form.cost||0), notes:form.notes?.trim()||null };
+        const {error}=editingId?await supabase.from("spray_records").update(payload).eq("id",editingId):await supabase.from("spray_records").insert(payload);
+        if(error) throw error;
+      }
+      if (modal === "inventory") {
+        const payload = { farm_id:farm.id, item_name:form.item_name.trim(), category:form.category, unit:form.unit,
+          quantity_on_hand:Number(form.quantity_on_hand||0), reorder_level:Number(form.reorder_level||0),
+          unit_cost:Number(form.unit_cost||0), supplier:form.supplier?.trim()||null, notes:form.notes?.trim()||null };
+        const {error}=editingId?await supabase.from("inventory_items").update(payload).eq("id",editingId):await supabase.from("inventory_items").insert(payload);
+        if(error) throw error;
+      }
+      if (modal === "harvest") {
+        const payload = { farm_id:farm.id, field_id:form.field_id, crop_cycle_id:form.crop_cycle_id||null,
+          harvest_date:form.harvest_date, grade:form.grade, quantity:Number(form.quantity||0), unit:form.unit,
+          waste_quantity:Number(form.waste_quantity||0), buyer:form.buyer?.trim()||null,
+          price_per_unit:Number(form.price_per_unit||0), notes:form.notes?.trim()||null };
+        const {error}=editingId?await supabase.from("harvest_records").update(payload).eq("id",editingId):await supabase.from("harvest_records").insert(payload);
+        if(error) throw error;
+      }
+      if (modal === "equipment") {
+        const payload = { farm_id:farm.id, name:form.name.trim(), category:form.category, model:form.model?.trim()||null,
+          serial_number:form.serial_number?.trim()||null, status:form.status,
+          service_interval_hours:Number(form.service_interval_hours||0), current_hours:Number(form.current_hours||0),
+          last_service_date:form.last_service_date||null, next_service_date:form.next_service_date||null, notes:form.notes?.trim()||null };
+        const {error}=editingId?await supabase.from("equipment").update(payload).eq("id",editingId):await supabase.from("equipment").insert(payload);
+        if(error) throw error;
+      }
       setModal(null);
       setEditingId(null);
       await loadData();
@@ -415,15 +531,17 @@ export default function App() {
           <section className="hero">
             <div><h2>Good afternoon, farmer.</h2><p>Track your farm from seed propagation through field production.</p></div>
             <div className="button-row">
-              <button className="button secondary" disabled={!fields.length} onClick={() => open("activity")}><Plus size={17}/> Field activity</button>
-              <button className="button primary" onClick={() => open("batch")}><Plus size={17}/> Nursery batch</button>
+              <button className="button secondary" disabled={!fields.length} onClick={() => open("irrigation")}><Plus size={17}/> Irrigation</button>
+              <button className="button secondary" disabled={!fields.length} onClick={() => open("harvest")}><Plus size={17}/> Harvest</button>
+              <button className="button primary" disabled={!fields.length} onClick={() => open("activity")}><Plus size={17}/> Field activity</button>
             </div>
           </section>
           <section className="stats-grid">
             <Stat label="Farm blocks" value={blocks.length} detail="Management areas" onClick={() => setPage("blocks")}/>
             <Stat label="Fields" value={fields.length} detail={`${metrics.totalArea.toFixed(1)} acres mapped`} onClick={() => setPage("fields")}/>
             <Stat label="Activities today" value={metrics.dueToday} detail={`${metrics.overdue} overdue tasks`} onClick={() => setPage("calendar")}/>
-            <Stat label="Workers" value={workers.length} detail="Available labour records" onClick={() => setPage("workers")}/>
+            <Stat label="Low stock" value={metrics.lowStock} detail="Items at reorder level" onClick={() => setPage("inventory")}/>
+            <Stat label="Revenue" value={money(metrics.revenue)} detail={`Profit ${money(metrics.profit)}`} onClick={() => setPage("expenses")}/>
           </section>
           <section className="split-grid">
             <Card title="Nursery batches" subtitle="Latest propagation activity" action="Open" onAction={() => setPage("nursery")}>
@@ -538,7 +656,67 @@ export default function App() {
           </Table>
         </SimplePage>}
 
-        {["irrigation","inventory","expenses","reports"].includes(page) && <ComingSoon page={page}/>}
+
+        {page === "irrigation" && <SimplePage title="Irrigation Management" description="Track water, pressure, duration, fuel and equipment by field." button="Add irrigation" disabled={!fields.length} onAdd={() => open("irrigation")}>
+          <Table headers={["Date / Field","System","Water & pressure","Actions"]}>
+            {irrigation.map(r=><div className="table-row" key={r.id}><strong>{r.irrigation_date}<small>{fieldName(r.field_id)}</small></strong><span>{r.system_type}<small>{equipmentName(r.equipment_id)}</small></span><span>{r.duration_hours||0} hr · {r.pressure_bar||0} bar<small>{r.water_source}</small></span><span className="row-actions"><button className="small-action" onClick={()=>edit("irrigation",r)}>Edit</button><button className="small-action danger-action" onClick={()=>deleteItem("irrigation_records",r.id,"irrigation record")}>Delete</button></span></div>)}
+            {!irrigation.length&&<Empty text="No irrigation records yet."/>}
+          </Table>
+        </SimplePage>}
+
+        {page === "sprays" && <SimplePage title="Spray Records" description="Maintain traceable pesticide and foliar application records." button="Add spray" disabled={!fields.length} onAdd={() => open("spray")}>
+          <Table headers={["Date / Field","Product","Safety","Actions"]}>
+            {sprays.map(r=><div className="table-row" key={r.id}><strong>{r.spray_date}<small>{fieldName(r.field_id)}</small></strong><span>{r.product_name}<small>{r.target_problem||r.active_ingredient||"—"}</small></span><span>PHI {r.phi_days||0} days<small>REI {r.rei_hours||0} hours</small></span><span className="row-actions"><button className="small-action" onClick={()=>edit("spray",r)}>Edit</button><button className="small-action danger-action" onClick={()=>deleteItem("spray_records",r.id,"spray record")}>Delete</button></span></div>)}
+            {!sprays.length&&<Empty text="No spray records yet."/>}
+          </Table>
+        </SimplePage>}
+
+        {page === "inventory" && <SimplePage title="Inventory" description="Track fertilizer, chemicals, seed, fuel and spare parts." button="Add item" onAdd={() => open("inventory")}>
+          <div className="summary-strip"><strong>{inventory.length} items</strong><span>{metrics.lowStock} low-stock alerts</span><span>Stock value {money(inventory.reduce((s,i)=>s+Number(i.quantity_on_hand||0)*Number(i.unit_cost||0),0))}</span></div>
+          <Table headers={["Item","Stock","Value","Actions"]}>
+            {inventory.map(i=><div className={`table-row ${Number(i.quantity_on_hand||0)<=Number(i.reorder_level||0)?"low-stock":""}`} key={i.id}><strong>{i.item_name}<small>{i.category}</small></strong><span>{i.quantity_on_hand||0} {i.unit}<small>Reorder at {i.reorder_level||0}</small></span><span>{money(Number(i.quantity_on_hand||0)*Number(i.unit_cost||0))}</span><span className="row-actions"><button className="small-action" onClick={()=>edit("inventory",i)}>Edit</button><button className="small-action danger-action" onClick={()=>deleteItem("inventory_items",i.id,`inventory item ${i.item_name}`)}>Delete</button></span></div>)}
+            {!inventory.length&&<Empty text="No inventory items yet."/>}
+          </Table>
+        </SimplePage>}
+
+        {page === "harvests" && <SimplePage title="Harvest & Sales" description="Record yield, grades, buyers, waste and revenue." button="Add harvest" disabled={!fields.length} onAdd={() => open("harvest")}>
+          <div className="summary-strip"><strong>Revenue {money(metrics.revenue)}</strong><span>{harvests.reduce((s,h)=>s+Number(h.quantity||0),0).toLocaleString()} total units</span></div>
+          <Table headers={["Date / Field","Harvest","Buyer","Actions"]}>
+            {harvests.map(h=><div className="table-row" key={h.id}><strong>{h.harvest_date}<small>{fieldName(h.field_id)} · Grade {h.grade}</small></strong><span>{h.quantity||0} {h.unit}<small>Waste {h.waste_quantity||0}</small></span><span>{h.buyer||"No buyer"}<small>{money(Number(h.quantity||0)*Number(h.price_per_unit||0))}</small></span><span className="row-actions"><button className="small-action" onClick={()=>edit("harvest",h)}>Edit</button><button className="small-action danger-action" onClick={()=>deleteItem("harvest_records",h.id,"harvest record")}>Delete</button></span></div>)}
+            {!harvests.length&&<Empty text="No harvest records yet."/>}
+          </Table>
+        </SimplePage>}
+
+        {page === "equipment" && <SimplePage title="Equipment" description="Track pumps, engines, reels and service dates." button="Add equipment" onAdd={() => open("equipment")}>
+          <Table headers={["Equipment","Hours","Service","Actions"]}>
+            {equipment.map(e=><div className="table-row" key={e.id}><strong>{e.name}<small>{e.category} · {e.model||"No model"}</small></strong><span>{e.current_hours||0} hr<small>Interval {e.service_interval_hours||0} hr</small></span><span>{e.next_service_date||"Not scheduled"}<small>{e.status}</small></span><span className="row-actions"><button className="small-action" onClick={()=>edit("equipment",e)}>Edit</button><button className="small-action danger-action" onClick={()=>deleteItem("equipment",e.id,`equipment ${e.name}`)}>Delete</button></span></div>)}
+            {!equipment.length&&<Empty text="No equipment records yet."/>}
+          </Table>
+        </SimplePage>}
+
+        {page === "expenses" && <SimplePage title="Financial Dashboard" description="Live operational costs, sales and estimated profit.">
+          <div className="finance-grid"><Stat label="Revenue" value={money(metrics.revenue)} detail="Harvest sales"/><Stat label="Operating costs" value={money(metrics.fieldCosts)} detail="Activities, irrigation and sprays"/><Stat label="Estimated profit" value={money(metrics.profit)} detail="Revenue minus recorded costs"/></div>
+          <Table headers={["Source","Records","Amount","Notes"]}>
+            <div className="table-row"><strong>Field activities</strong><span>{activities.length}</span><span>{money(activities.reduce((s,a)=>s+Number(a.labour_cost||0)+Number(a.input_cost||0),0))}</span><span>Labour + inputs</span></div>
+            <div className="table-row"><strong>Irrigation</strong><span>{irrigation.length}</span><span>{money(irrigation.reduce((s,r)=>s+Number(r.cost||0),0))}</span><span>Fuel and operation</span></div>
+            <div className="table-row"><strong>Sprays</strong><span>{sprays.length}</span><span>{money(sprays.reduce((s,r)=>s+Number(r.cost||0),0))}</span><span>Products and labour</span></div>
+            <div className="table-row"><strong>Harvest sales</strong><span>{harvests.length}</span><span>{money(metrics.revenue)}</span><span>Gross revenue</span></div>
+          </Table>
+        </SimplePage>}
+
+        {page === "reports" && <SimplePage title="Field Timeline" description="A chronological field record from nursery through harvest.">
+          <div className="timeline-filter"><Field label="Select field"><select value={timelineField} onChange={e=>setTimelineField(e.target.value)}>{fields.map(f=><option key={f.id} value={f.id}>{f.name}</option>)}</select></Field></div>
+          <div className="timeline">
+            {[
+              ...cycles.filter(x=>x.field_id===timelineField).map(x=>({date:x.planting_date,title:`Crop cycle: ${x.crop_name}`,detail:`${x.variety||""} · ${x.status}`})),
+              ...activities.filter(x=>x.field_id===timelineField).map(x=>({date:x.scheduled_date,title:`Activity: ${x.activity_type}`,detail:`${x.status} · ${money(Number(x.labour_cost||0)+Number(x.input_cost||0))}`})),
+              ...irrigation.filter(x=>x.field_id===timelineField).map(x=>({date:x.irrigation_date,title:"Irrigation",detail:`${x.duration_hours||0} hr · ${x.pressure_bar||0} bar · ${x.system_type}`})),
+              ...sprays.filter(x=>x.field_id===timelineField).map(x=>({date:x.spray_date,title:`Spray: ${x.product_name}`,detail:`PHI ${x.phi_days||0} days · ${x.target_problem||""}`})),
+              ...harvests.filter(x=>x.field_id===timelineField).map(x=>({date:x.harvest_date,title:`Harvest: ${x.quantity||0} ${x.unit}`,detail:`Grade ${x.grade} · ${money(Number(x.quantity||0)*Number(x.price_per_unit||0))}`}))
+            ].sort((a,b)=>String(b.date).localeCompare(String(a.date))).map((x,i)=><article className="timeline-item" key={`${x.date}-${i}`}><span>{x.date||"—"}</span><div><strong>{x.title}</strong><p>{x.detail}</p></div></article>)}
+            {!timelineField&&<Empty text="Add a field to start a timeline."/>}
+          </div>
+        </SimplePage>}
       </main>
 
       {mobileNav && <div className="sidebar-backdrop" onClick={() => setMobileNav(false)}/>}
@@ -635,6 +813,38 @@ export default function App() {
             </div>
           </>}
 
+
+          {modal === "irrigation" && <>
+            <div className="form-grid"><Field label="Field"><select required value={form.field_id||""} onChange={e=>setForm({...form,field_id:e.target.value,crop_cycle_id:cycles.find(c=>c.field_id===e.target.value)?.id||""})}>{fields.map(f=><option key={f.id} value={f.id}>{f.name}</option>)}</select></Field><Field label="Crop cycle"><select value={form.crop_cycle_id||""} onChange={e=>setForm({...form,crop_cycle_id:e.target.value})}><option value="">No crop cycle</option>{cycles.filter(c=>c.field_id===form.field_id).map(c=><option key={c.id} value={c.id}>{cycleName(c.id)}</option>)}</select></Field></div>
+            <div className="form-grid"><Field label="Date"><input required type="date" value={form.irrigation_date||""} onChange={e=>setForm({...form,irrigation_date:e.target.value})}/></Field><Field label="Water source"><input value={form.water_source||""} onChange={e=>setForm({...form,water_source:e.target.value})}/></Field></div>
+            <div className="form-grid"><Field label="System"><select value={form.system_type||""} onChange={e=>setForm({...form,system_type:e.target.value})}>{["Travelling reel","Rain hose","Drip","Sprinkler","Manual"].map(x=><option key={x}>{x}</option>)}</select></Field><Field label="Equipment"><select value={form.equipment_id||""} onChange={e=>setForm({...form,equipment_id:e.target.value})}><option value="">Not selected</option>{equipment.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select></Field></div>
+            <div className="form-grid three"><Field label="Duration hours"><input type="number" step=".1" value={form.duration_hours||""} onChange={e=>setForm({...form,duration_hours:e.target.value})}/></Field><Field label="Pressure bar"><input type="number" step=".1" value={form.pressure_bar||""} onChange={e=>setForm({...form,pressure_bar:e.target.value})}/></Field><Field label="Water m³"><input type="number" step=".1" value={form.water_volume_m3||""} onChange={e=>setForm({...form,water_volume_m3:e.target.value})}/></Field></div>
+            <div className="form-grid"><Field label="Fuel litres"><input type="number" step=".1" value={form.fuel_litres||""} onChange={e=>setForm({...form,fuel_litres:e.target.value})}/></Field><Field label="Cost (KES)"><input type="number" value={form.cost||""} onChange={e=>setForm({...form,cost:e.target.value})}/></Field></div><Field label="Notes"><textarea value={form.notes||""} onChange={e=>setForm({...form,notes:e.target.value})}/></Field>
+          </>}
+          {modal === "spray" && <>
+            <div className="form-grid"><Field label="Field"><select required value={form.field_id||""} onChange={e=>setForm({...form,field_id:e.target.value})}>{fields.map(f=><option key={f.id} value={f.id}>{f.name}</option>)}</select></Field><Field label="Date"><input required type="date" value={form.spray_date||""} onChange={e=>setForm({...form,spray_date:e.target.value})}/></Field></div>
+            <div className="form-grid"><Field label="Product"><input required value={form.product_name||""} onChange={e=>setForm({...form,product_name:e.target.value})}/></Field><Field label="Active ingredient"><input value={form.active_ingredient||""} onChange={e=>setForm({...form,active_ingredient:e.target.value})}/></Field></div>
+            <div className="form-grid"><Field label="Target pest/disease"><input value={form.target_problem||""} onChange={e=>setForm({...form,target_problem:e.target.value})}/></Field><Field label="Dose"><input value={form.dose||""} placeholder="e.g. 2 ml/L" onChange={e=>setForm({...form,dose:e.target.value})}/></Field></div>
+            <div className="form-grid three"><Field label="Quantity used"><input type="number" step=".1" value={form.quantity_used||""} onChange={e=>setForm({...form,quantity_used:e.target.value})}/></Field><Field label="PHI days"><input type="number" value={form.phi_days||""} onChange={e=>setForm({...form,phi_days:e.target.value})}/></Field><Field label="REI hours"><input type="number" value={form.rei_hours||""} onChange={e=>setForm({...form,rei_hours:e.target.value})}/></Field></div>
+            <div className="form-grid"><Field label="Applicator"><select value={form.worker_id||""} onChange={e=>setForm({...form,worker_id:e.target.value})}><option value="">Unassigned</option>{workers.map(w=><option key={w.id} value={w.id}>{w.full_name}</option>)}</select></Field><Field label="Cost (KES)"><input type="number" value={form.cost||""} onChange={e=>setForm({...form,cost:e.target.value})}/></Field></div><Field label="Weather"><input value={form.weather||""} placeholder="Calm, dry, cloudy" onChange={e=>setForm({...form,weather:e.target.value})}/></Field><Field label="Notes"><textarea value={form.notes||""} onChange={e=>setForm({...form,notes:e.target.value})}/></Field>
+          </>}
+          {modal === "inventory" && <>
+            <div className="form-grid"><Field label="Item name"><input required value={form.item_name||""} onChange={e=>setForm({...form,item_name:e.target.value})}/></Field><Field label="Category"><select value={form.category||""} onChange={e=>setForm({...form,category:e.target.value})}>{["Seed","Fertilizer","Chemical","Fuel","Spare part","Other"].map(x=><option key={x}>{x}</option>)}</select></Field></div>
+            <div className="form-grid three"><Field label="Quantity"><input required type="number" step=".01" value={form.quantity_on_hand||""} onChange={e=>setForm({...form,quantity_on_hand:e.target.value})}/></Field><Field label="Unit"><input value={form.unit||""} onChange={e=>setForm({...form,unit:e.target.value})}/></Field><Field label="Reorder level"><input type="number" step=".01" value={form.reorder_level||""} onChange={e=>setForm({...form,reorder_level:e.target.value})}/></Field></div>
+            <div className="form-grid"><Field label="Unit cost (KES)"><input type="number" step=".01" value={form.unit_cost||""} onChange={e=>setForm({...form,unit_cost:e.target.value})}/></Field><Field label="Supplier"><input value={form.supplier||""} onChange={e=>setForm({...form,supplier:e.target.value})}/></Field></div><Field label="Notes"><textarea value={form.notes||""} onChange={e=>setForm({...form,notes:e.target.value})}/></Field>
+          </>}
+          {modal === "harvest" && <>
+            <div className="form-grid"><Field label="Field"><select required value={form.field_id||""} onChange={e=>setForm({...form,field_id:e.target.value,crop_cycle_id:cycles.find(c=>c.field_id===e.target.value)?.id||""})}>{fields.map(f=><option key={f.id} value={f.id}>{f.name}</option>)}</select></Field><Field label="Crop cycle"><select value={form.crop_cycle_id||""} onChange={e=>setForm({...form,crop_cycle_id:e.target.value})}><option value="">No crop cycle</option>{cycles.filter(c=>c.field_id===form.field_id).map(c=><option key={c.id} value={c.id}>{cycleName(c.id)}</option>)}</select></Field></div>
+            <div className="form-grid"><Field label="Harvest date"><input required type="date" value={form.harvest_date||""} onChange={e=>setForm({...form,harvest_date:e.target.value})}/></Field><Field label="Grade"><select value={form.grade||"A"} onChange={e=>setForm({...form,grade:e.target.value})}>{["A","B","C","Unsorted"].map(x=><option key={x}>{x}</option>)}</select></Field></div>
+            <div className="form-grid three"><Field label="Quantity"><input required type="number" step=".01" value={form.quantity||""} onChange={e=>setForm({...form,quantity:e.target.value})}/></Field><Field label="Unit"><input value={form.unit||""} onChange={e=>setForm({...form,unit:e.target.value})}/></Field><Field label="Waste quantity"><input type="number" step=".01" value={form.waste_quantity||""} onChange={e=>setForm({...form,waste_quantity:e.target.value})}/></Field></div>
+            <div className="form-grid"><Field label="Buyer"><input value={form.buyer||""} onChange={e=>setForm({...form,buyer:e.target.value})}/></Field><Field label="Price per unit (KES)"><input type="number" step=".01" value={form.price_per_unit||""} onChange={e=>setForm({...form,price_per_unit:e.target.value})}/></Field></div><Field label="Notes"><textarea value={form.notes||""} onChange={e=>setForm({...form,notes:e.target.value})}/></Field>
+          </>}
+          {modal === "equipment" && <>
+            <div className="form-grid"><Field label="Name"><input required value={form.name||""} onChange={e=>setForm({...form,name:e.target.value})}/></Field><Field label="Category"><select value={form.category||""} onChange={e=>setForm({...form,category:e.target.value})}>{["Engine","Pump","Travelling reel","Rain hose","Tractor","Sprayer","Other"].map(x=><option key={x}>{x}</option>)}</select></Field></div>
+            <div className="form-grid"><Field label="Model"><input value={form.model||""} onChange={e=>setForm({...form,model:e.target.value})}/></Field><Field label="Serial number"><input value={form.serial_number||""} onChange={e=>setForm({...form,serial_number:e.target.value})}/></Field></div>
+            <div className="form-grid three"><Field label="Current hours"><input type="number" value={form.current_hours||""} onChange={e=>setForm({...form,current_hours:e.target.value})}/></Field><Field label="Service interval hours"><input type="number" value={form.service_interval_hours||""} onChange={e=>setForm({...form,service_interval_hours:e.target.value})}/></Field><Field label="Status"><select value={form.status||"active"} onChange={e=>setForm({...form,status:e.target.value})}><option>active</option><option>service due</option><option>inactive</option></select></Field></div>
+            <div className="form-grid"><Field label="Last service"><input type="date" value={form.last_service_date||""} onChange={e=>setForm({...form,last_service_date:e.target.value})}/></Field><Field label="Next service"><input type="date" value={form.next_service_date||""} onChange={e=>setForm({...form,next_service_date:e.target.value})}/></Field></div><Field label="Notes"><textarea value={form.notes||""} onChange={e=>setForm({...form,notes:e.target.value})}/></Field>
+          </>}
           <div className="form-actions"><button type="button" className="button secondary" onClick={()=>{setModal(null);setEditingId(null)}}>Cancel</button><button className="button primary" disabled={saving}>{saving ? "Saving…" : (editingId ? "Update" : "Save")}</button></div>
         </form>
       </Modal>}
@@ -649,7 +859,9 @@ function averageGermination(batches) {
 }
 function modalLabel(type){return ({
   block:"farm block",field:"field",batch:"propagation batch",
-  cycle:"crop cycle",activity:"field activity",worker:"worker"
+  cycle:"crop cycle",activity:"field activity",worker:"worker",
+  irrigation:"irrigation record",spray:"spray record",inventory:"inventory item",
+  harvest:"harvest record",equipment:"equipment record"
 })[type]}
 function StatusBanner({status,message}){const Icon=status==="success"?CheckCircle2:status==="loading"?LoaderCircle:AlertCircle;return message?<div className={`status-banner ${status}`}><Icon size={18} className={status==="loading"?"spin":""}/><span>{message}</span></div>:null}
 function Modal({title,children,onClose}){return <div className="overlay" onMouseDown={onClose}><section className="modal large" onMouseDown={e=>e.stopPropagation()}><header className="modal-header"><h2>{title}</h2><button className="icon-button" onClick={onClose}><X size={20}/></button></header>{children}</section></div>}
