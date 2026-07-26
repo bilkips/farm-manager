@@ -137,3 +137,9 @@ p { margin: 0; font-size: 13px; color: #778078; line-height: 1.55; }
   .record .row-actions{max-width:90px}
   .activity-status{flex-wrap:wrap}
 }
+
+.stat-card.clickable{cursor:pointer;transition:transform .15s ease,box-shadow .15s ease}
+.stat-card.clickable:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(30,60,40,.08)}
+.danger-action{background:#fdeaea!important;color:#a33f3f!important}
+.card-header button{cursor:pointer}
+@media(max-width:690px){.stat-card.clickable:active{transform:scale(.98)}}

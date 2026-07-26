@@ -283,6 +283,13 @@ export default function App() {
           ? await supabase.from("crop_cycles").update(payload).eq("id", editingId)
           : await supabase.from("crop_cycles").insert(payload);
         if (error) throw error;
+        if (!editingId && form.source_batch_id) {
+          const { error: batchUpdateError } = await supabase
+            .from("propagation_batches")
+            .update({ status: "transplanted" })
+            .eq("id", form.source_batch_id);
+          if (batchUpdateError) throw batchUpdateError;
+        }
       }
       if (modal === "activity") {
         const payload = {
@@ -353,6 +360,33 @@ export default function App() {
     }
   }
 
+  async function deleteItem(table, id, label) {
+    const confirmed = window.confirm(`Delete ${label}? This cannot be undone.`);
+    if (!confirmed) return;
+    try {
+      const { error } = await supabase.from(table).delete().eq("id", id);
+      if (error) throw error;
+      await loadData();
+    } catch (error) {
+      setStatus({ type: "error", message: friendlyError(error) });
+    }
+  }
+
+  async function transplantBatch(batch) {
+    const availableField = fields[0]?.id || "";
+    setPage("crops");
+    setEditingId(null);
+    setForm({
+      ...emptyCycle,
+      field_id: availableField,
+      source_batch_id: batch.id,
+      crop_name: batch.crop_name || "",
+      variety: batch.variety || "",
+      area_acres: fields.find(f => f.id === availableField)?.area_acres || ""
+    });
+    setModal("cycle");
+  }
+
   return (
     <div className="app-shell">
       <aside className={`sidebar ${mobileNav ? "open" : ""}`}>
@@ -386,19 +420,19 @@ export default function App() {
             </div>
           </section>
           <section className="stats-grid">
-            <Stat label="Farm blocks" value={blocks.length} detail="Management areas"/>
-            <Stat label="Fields" value={fields.length} detail={`${metrics.totalArea.toFixed(1)} acres mapped`}/>
-            <Stat label="Activities today" value={metrics.dueToday} detail={`${metrics.overdue} overdue tasks`}/>
-            <Stat label="Workers" value={workers.length} detail="Available labour records"/>
+            <Stat label="Farm blocks" value={blocks.length} detail="Management areas" onClick={() => setPage("blocks")}/>
+            <Stat label="Fields" value={fields.length} detail={`${metrics.totalArea.toFixed(1)} acres mapped`} onClick={() => setPage("fields")}/>
+            <Stat label="Activities today" value={metrics.dueToday} detail={`${metrics.overdue} overdue tasks`} onClick={() => setPage("calendar")}/>
+            <Stat label="Workers" value={workers.length} detail="Available labour records" onClick={() => setPage("workers")}/>
           </section>
           <section className="split-grid">
-            <Card title="Nursery batches" subtitle="Latest propagation activity" action="Add" onAction={() => open("batch")}>
+            <Card title="Nursery batches" subtitle="Latest propagation activity" action="Open" onAction={() => setPage("nursery")}>
               {batches.slice(0,5).map(b => <Record key={b.id} Icon={Sprout} title={`${b.crop_name}${b.variety ? " · "+b.variety : ""}`}
                 subtitle={`${b.sowing_date || "No date"} · ${Math.max(0, Number(b.germinated||0)-Number(b.losses||0))} live seedlings`}
                 badge={b.status || "sown"}/>)}
               {!batches.length && <Empty text="No propagation batches yet."/>}
             </Card>
-            <Card title="Crop cycles" subtitle="Field production" action="Add" onAction={() => open("cycle")}>
+            <Card title="Crop cycles" subtitle="Field production" action="Open" onAction={() => setPage("crops")}>
               {cycles.slice(0,5).map(c => <Record key={c.id} Icon={Leaf} title={`${c.crop_name}${c.variety ? " · "+c.variety : ""}`}
                 subtitle={`${fieldName(c.field_id)} · ${c.planting_date || "Not planted"}`} badge={c.status || "planned"}/>)}
               {!cycles.length && <Empty text="No crop cycles yet."/>}
@@ -413,14 +447,14 @@ export default function App() {
         {page === "blocks" && <SimplePage title="Farm Blocks" description="Group fields into farm management areas." button="Add block" onAdd={() => open("block")}>
           <Table headers={["Name","Area","Fields","Status"]}>
             {blocks.map(b => <div className="table-row" key={b.id}><strong>{b.name}</strong><span>{Number(b.area_acres||0)} acres</span>
-              <span>{fields.filter(f=>f.farm_block_id===b.id).length}</span><span className="row-actions"><span className="pill">Active</span><button className="small-action" onClick={() => edit("block", b)}>Edit</button></span></div>)}
+              <span>{fields.filter(f=>f.farm_block_id===b.id).length}</span><span className="row-actions"><span className="pill">Active</span><button className="small-action" onClick={() => edit("block", b)}>Edit</button><button className="small-action danger-action" onClick={() => deleteItem("farm_blocks", b.id, `farm block ${b.name}`)}>Delete</button></span></div>)}
           </Table>
         </SimplePage>}
 
         {page === "fields" && <SimplePage title="Fields" description="Manage individual production units." button="Add field" disabled={!blocks.length} onAdd={() => open("field")}>
           <Table headers={["Name","Block","Area","Status"]}>
             {fields.map(f => <div className="table-row" key={f.id}><strong>{f.name}</strong><span>{blockName(f.farm_block_id)}</span>
-              <span>{Number(f.area_acres||0)} acres</span><span className="row-actions"><span className="pill">{f.status||"available"}</span><button className="small-action" onClick={() => edit("field", f)}>Edit</button></span></div>)}
+              <span>{Number(f.area_acres||0)} acres</span><span className="row-actions"><span className="pill">{f.status||"available"}</span><button className="small-action" onClick={() => edit("field", f)}>Edit</button><button className="small-action danger-action" onClick={() => deleteItem("fields", f.id, `field ${f.name}`)}>Delete</button></span></div>)}
           </Table>
         </SimplePage>}
 
@@ -442,8 +476,9 @@ export default function App() {
                 <p>Expected transplant: {b.expected_transplant_date || "Not set"}</p>
                 <div className="batch-actions">
                   <button onClick={() => edit("batch", b)}>Edit</button>
-                  {b.status !== "ready" && <button onClick={() => updateBatchStatus(b.id,"ready")}>Mark ready</button>}
-                  {b.status === "ready" && <button onClick={() => { setPage("crops"); open("cycle"); setForm(v => ({...v, source_batch_id:b.id, crop_name:b.crop_name, variety:b.variety||""})) }}>Transplant</button>}
+                  <button className="danger-action" onClick={() => deleteItem("propagation_batches", b.id, `propagation batch ${b.crop_name}`)}>Delete</button>
+                  {b.status !== "ready" && b.status !== "transplanted" && <button onClick={() => updateBatchStatus(b.id,"ready")}>Mark ready</button>}
+                  {b.status === "ready" && <button onClick={() => transplantBatch(b)}>Transplant</button>}
                 </div>
               </article>
             })}
@@ -456,7 +491,7 @@ export default function App() {
           <Table headers={["Crop","Field","Source","Status"]}>
             {cycles.map(c => <div className="table-row" key={c.id}>
               <strong>{c.crop_name}{c.variety ? " · "+c.variety : ""}</strong><span>{fieldName(c.field_id)}</span>
-              <span>{batchName(c.source_batch_id)}</span><span className="row-actions"><span className="pill">{c.status||"planned"}</span><button className="small-action" onClick={() => edit("cycle", c)}>Edit</button></span>
+              <span>{batchName(c.source_batch_id)}</span><span className="row-actions"><span className="pill">{c.status||"planned"}</span><button className="small-action" onClick={() => edit("cycle", c)}>Edit</button><button className="small-action danger-action" onClick={() => deleteItem("crop_cycles", c.id, `crop cycle ${c.crop_name}`)}>Delete</button></span>
             </div>)}
           </Table>
         </SimplePage>}
@@ -471,7 +506,8 @@ export default function App() {
               <span>{a.scheduled_date || "No date"}</span>
               <span className="activity-status"><span className="pill">{a.status || "planned"}</span>
                 <button className="small-action" onClick={() => edit("activity", a)}>Edit</button>
-                {a.status !== "completed" && <button className="small-action" onClick={() => completeActivity(a.id)}>Complete</button>}</span>
+                <button className="small-action danger-action" onClick={() => deleteItem("field_activities", a.id, `${a.activity_type} activity`)}>Delete</button>
+                <div className="row-actions"><button className="small-action" onClick={() => edit("activity", a)}>Edit</button><button className="small-action danger-action" onClick={() => deleteItem("field_activities", a.id, `${a.activity_type} activity`)}>Delete</button>{a.status !== "completed" && <button className="small-action" onClick={() => completeActivity(a.id)}>Complete</button>}</div></span>
             </div>)}
             {!activities.length && <Empty text="No field activities yet."/>}
           </Table>
@@ -496,7 +532,7 @@ export default function App() {
           <Table headers={["Worker","Role","Daily rate","Status"]}>
             {workers.map(w => <div className="table-row" key={w.id}>
               <strong>{w.full_name}</strong><span>{w.role || "Worker"}</span>
-              <span>{Number(w.daily_rate || 0).toLocaleString()} </span><span className="row-actions"><span className="pill">{w.status || "active"}</span><button className="small-action" onClick={() => edit("worker", w)}>Edit</button></span>
+              <span>{Number(w.daily_rate || 0).toLocaleString()} </span><span className="row-actions"><span className="pill">{w.status || "active"}</span><button className="small-action" onClick={() => edit("worker", w)}>Edit</button><button className="small-action danger-action" onClick={() => deleteItem("workers", w.id, `worker ${w.full_name}`)}>Delete</button></span>
             </div>)}
             {!workers.length && <Empty text="No workers added yet."/>}
           </Table>
@@ -543,7 +579,7 @@ export default function App() {
           {modal === "cycle" && <>
             <div className="form-grid">
               <Field label="Field"><select required value={form.field_id||""} onChange={e=>{const f=fields.find(x=>x.id===e.target.value);setForm({...form,field_id:e.target.value,area_acres:f?.area_acres||form.area_acres})}}>{fields.map(f=><option key={f.id} value={f.id}>{f.name}</option>)}</select></Field>
-              <Field label="Nursery source"><select value={form.source_batch_id||""} onChange={e=>{const b=batches.find(x=>x.id===e.target.value);setForm({...form,source_batch_id:e.target.value,crop_name:b?.crop_name||form.crop_name,variety:b?.variety||form.variety})}}><option value="">Direct planting</option>{batches.map(b=><option key={b.id} value={b.id}>{b.crop_name}{b.variety ? " · "+b.variety : ""}</option>)}</select></Field>
+              <Field label="Nursery source"><select value={form.source_batch_id||""} onChange={e=>{const b=batches.find(x=>x.id===e.target.value);setForm({...form,source_batch_id:e.target.value,crop_name:b?.crop_name||form.crop_name,variety:b?.variety||form.variety})}}><option value="">Direct planting</option>{batches.filter(b => b.status === "ready" || b.id === form.source_batch_id).map(b=><option key={b.id} value={b.id}>{b.crop_name}{b.variety ? " · "+b.variety : ""}</option>)}</select></Field>
             </div>
             <div className="form-grid">
               <Field label="Crop"><input required value={form.crop_name||""} onChange={e=>setForm({...form,crop_name:e.target.value})}/></Field>
@@ -617,10 +653,10 @@ function modalLabel(type){return ({
 })[type]}
 function StatusBanner({status,message}){const Icon=status==="success"?CheckCircle2:status==="loading"?LoaderCircle:AlertCircle;return message?<div className={`status-banner ${status}`}><Icon size={18} className={status==="loading"?"spin":""}/><span>{message}</span></div>:null}
 function Modal({title,children,onClose}){return <div className="overlay" onMouseDown={onClose}><section className="modal large" onMouseDown={e=>e.stopPropagation()}><header className="modal-header"><h2>{title}</h2><button className="icon-button" onClick={onClose}><X size={20}/></button></header>{children}</section></div>}
-function Stat({label,value,detail}){return <article className="stat-card"><span>{label}</span><strong>{value}</strong><small>{detail}</small></article>}
+function Stat({label,value,detail,onClick}){return <article className={`stat-card ${onClick ? "clickable" : ""}`} onClick={onClick} role={onClick ? "button" : undefined} tabIndex={onClick ? 0 : undefined}><span>{label}</span><strong>{value}</strong><small>{detail}</small></article>}
 function Mini({label,value}){return <article className="mini"><strong>{value}</strong><span>{label}</span></article>}
 function Card({title,subtitle,action,onAction,children}){return <section className="card"><header className="card-header"><div><h3>{title}</h3><p>{subtitle}</p></div>{action&&<button onClick={onAction}>{action}</button>}</header>{children}</section>}
-function Record({Icon,title,subtitle,badge,onEdit}){return <div className="record"><div className="record-icon"><Icon size={18}/></div><div className="record-main"><strong>{title}</strong><span>{subtitle}</span></div><span className="row-actions"><span className="pill">{badge}</span>{onEdit&&<button className="small-action" onClick={onEdit}>Edit</button>}</span></div>}
+function Record({Icon,title,subtitle,badge,onEdit,onDelete}){return <div className="record"><div className="record-icon"><Icon size={18}/></div><div className="record-main"><strong>{title}</strong><span>{subtitle}</span></div><span className="row-actions"><span className="pill">{badge}</span>{onEdit&&<button className="small-action" onClick={onEdit}>Edit</button>}{onDelete&&<button className="small-action danger-action" onClick={onDelete}>Delete</button>}</span></div>}
 function Empty({text}){return <div className="empty">{text}</div>}
 function SimplePage({title,description,button,onAdd,disabled,children}){return <><section className="hero"><div><h2>{title}</h2><p>{description}</p></div><button className="button primary" disabled={disabled} onClick={onAdd}><Plus size={17}/>{button}</button></section><section className="card">{children}</section></>}
 function Table({headers,children}){return <div className="data-table"><div className="table-row table-head">{headers.map(h=><span key={h}>{h}</span>)}</div>{children}</div>}
