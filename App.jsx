@@ -1,9 +1,12 @@
+"use client";
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 import {
   AlertCircle, Blocks, CalendarDays, CheckCircle2, CircleDollarSign, ClipboardList,
   Droplets, Gauge, Home, Leaf, LoaderCircle, Menu, Package, Plus, RefreshCw,
-  Search, ShoppingCart, Sprout, Tractor, Users, Warehouse, Wrench, X
+  Search, ShoppingCart, Sprout, Tractor, Users, Warehouse, Wrench, X,
+  ShieldCheck, LogOut, UserPlus, History
 } from "lucide-react";
 
 const SUPABASE_URL = "https://itlngocavjyrjgeblsmq.supabase.co";
@@ -25,8 +28,15 @@ const NAV = [
   ["harvests", "Harvest & Sales", ShoppingCart],
   ["equipment", "Equipment", Wrench],
   ["expenses", "Financials", CircleDollarSign],
-  ["reports", "Field Timeline", ClipboardList]
+  ["reports", "Field Timeline", ClipboardList],
+  ["users", "Users & Access", ShieldCheck]
 ];
+
+const ROLE_LABELS = {
+  owner: "Owner / Admin", manager: "Farm Manager", storekeeper: "Storekeeper",
+  supervisor: "Field Supervisor", viewer: "Viewer"
+};
+const WRITE_ROLES = new Set(["owner", "manager", "storekeeper", "supervisor"]);
 
 const emptyBlock = { name: "", area: "" };
 const emptyField = { name: "", area: "", blockId: "", status: "available" };
@@ -99,6 +109,11 @@ function friendlyError(error) {
 }
 
 export default function App() {
+  const [session, setSession] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [profile, setProfile] = useState(null);
+  const [farmUsers, setFarmUsers] = useState([]);
+  const [auditLogs, setAuditLogs] = useState([]);
   const [page, setPage] = useState("dashboard");
   const [mobileNav, setMobileNav] = useState(false);
   const [farm, setFarm] = useState(null);
@@ -122,6 +137,18 @@ export default function App() {
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
 
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session || null);
+      setAuthLoading(false);
+    });
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession);
+      setAuthLoading(false);
+    });
+    return () => listener.subscription.unsubscribe();
+  }, []);
+
   const loadData = useCallback(async () => {
     setStatus({ type: "loading", message: "Loading live farm records…" });
     try {
@@ -136,6 +163,15 @@ export default function App() {
         activeFarm = data;
       }
       setFarm(activeFarm);
+
+      const [{ data: myProfile }, { data: userRows }, { data: logRows }] = await Promise.all([
+        supabase.from("farm_profiles").select("*").eq("id", session.user.id).maybeSingle(),
+        supabase.from("farm_profiles").select("*").order("full_name"),
+        supabase.from("activity_log").select("*").order("created_at", { ascending: false }).limit(150)
+      ]);
+      setProfile(myProfile || null);
+      setFarmUsers(userRows || []);
+      setAuditLogs(logRows || []);
 
       const { data: blockRows, error: blockError } = await supabase
         .from("farm_blocks").select("*").eq("farm_id", activeFarm.id).order("name");
@@ -189,13 +225,27 @@ export default function App() {
       setHarvests(harvestRows);
       setEquipment(equipmentRows);
       setTimelineField(v => v || farmFields[0]?.id || "");
-      setStatus({ type: "success", message: "Connected to Supabase. Live V7 data loaded." });
+      setStatus({ type: "success", message: "Connected securely. Live V7.2 farm data loaded." });
     } catch (error) {
       setStatus({ type: "error", message: friendlyError(error) });
     }
-  }, []);
+  }, [session]);
 
-  useEffect(() => { loadData(); }, [loadData]);
+  useEffect(() => { if (session) loadData(); }, [session, loadData]);
+
+  const role = profile?.role || "viewer";
+  const canWrite = WRITE_ROLES.has(role) && profile?.status !== "inactive";
+  const canManageUsers = role === "owner";
+  const canSeeFinancials = ["owner", "manager"].includes(role);
+  const canWriteModule = module => {
+    if (!canWrite) return false;
+    if (["owner","manager"].includes(role)) return true;
+    if (role === "storekeeper") return ["inventory","equipment"].includes(module);
+    if (role === "supervisor") return ["nursery","crops","activities","calendar","workers","irrigation","sprays","harvests"].includes(module);
+    return false;
+  };
+  const typeModule = {block:"blocks",field:"fields",batch:"nursery",cycle:"crops",activity:"activities",worker:"workers",irrigation:"irrigation",spray:"sprays",inventory:"inventory",harvest:"harvests",equipment:"equipment"};
+  const tableModule = {farm_blocks:"blocks",fields:"fields",propagation_batches:"nursery",crop_cycles:"crops",field_activities:"activities",workers:"workers",irrigation_records:"irrigation",spray_records:"sprays",inventory_items:"inventory",harvest_records:"harvests",equipment:"equipment"};
 
   const metrics = useMemo(() => {
     const totalArea = fields.reduce((sum, f) => sum + Number(f.area_acres || 0), 0);
@@ -239,6 +289,7 @@ export default function App() {
   });
 
   function open(type) {
+    if (!canWriteModule(typeModule[type])) return setStatus({type:"error",message:"Your role cannot add records in this section."});
     setEditingId(null);
     if (type === "block") setForm(emptyBlock);
     if (type === "field") setForm({ ...emptyField, blockId: blocks[0]?.id || "" });
@@ -265,6 +316,7 @@ export default function App() {
   }
 
   function edit(type, item) {
+    if (!canWriteModule(typeModule[type])) return setStatus({type:"error",message:"Your role cannot edit this section."});
     setEditingId(item.id);
     if (type === "block") setForm({ name: item.name || "", area: item.area_acres || "" });
     if (type === "field") setForm({
@@ -311,6 +363,7 @@ export default function App() {
 
   async function save(event) {
     event.preventDefault();
+    if (!canWriteModule(typeModule[modal])) return;
     setSaving(true);
     try {
       if (modal === "block") {
@@ -467,6 +520,7 @@ export default function App() {
   }
 
   async function updateBatchStatus(id, newStatus) {
+    if (!canWriteModule("nursery")) return;
     try {
       const { error } = await supabase.from("propagation_batches").update({ status: newStatus }).eq("id", id);
       if (error) throw error;
@@ -477,6 +531,7 @@ export default function App() {
   }
 
   async function completeActivity(id) {
+    if (!canWriteModule("activities")) return;
     try {
       const { error } = await supabase.from("field_activities").update({
         status: "completed",
@@ -490,6 +545,7 @@ export default function App() {
   }
 
   async function deleteItem(table, id, label) {
+    if (!canWriteModule(tableModule[table])) return setStatus({type:"error",message:"Your role cannot delete records in this section."});
     const confirmed = window.confirm(`Delete ${label}? This cannot be undone.`);
     if (!confirmed) return;
     try {
@@ -502,6 +558,7 @@ export default function App() {
   }
 
   async function transplantBatch(batch) {
+    if (!canWriteModule("crops")) return;
     const availableField = fields[0]?.id || "";
     setPage("crops");
     setEditingId(null);
@@ -516,26 +573,46 @@ export default function App() {
     setModal("cycle");
   }
 
+  async function updateUser(userId, patch) {
+    if (!canManageUsers) return;
+    const { error } = await supabase.from("farm_profiles").update(patch).eq("id", userId);
+    if (error) setStatus({ type: "error", message: friendlyError(error) });
+    else await loadData();
+  }
+
+  if (authLoading) return <div className="auth-screen"><LoaderCircle className="spin"/><p>Opening Farm Manager…</p></div>;
+  if (!session) return <AuthScreen />;
+
+  const visibleNav = NAV.filter(([id]) =>
+    (id !== "users" || canManageUsers) &&
+    (id !== "expenses" || canSeeFinancials)
+  );
+
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${canWriteModule(page) ? "" : "readonly"}`}>
       <aside className={`sidebar ${mobileNav ? "open" : ""}`}>
         <div className="brand">
           <div className="brand-mark"><Sprout size={25}/></div>
           <div><strong>Farm Manager</strong><span>Nursery & production</span></div>
           <button className="mobile-close" onClick={() => setMobileNav(false)}><X/></button>
         </div>
-        <nav>{NAV.map(([id,label,Icon]) => (
+        <nav>{visibleNav.map(([id,label,Icon]) => (
           <button key={id} className={page===id ? "active" : ""} onClick={() => {setPage(id);setSearchTerm("");setMobileNav(false)}}>
             <Icon size={19}/><span>{label}</span>
           </button>
         ))}</nav>
+        <div className="signed-in">
+          <span>{profile?.full_name || session.user.email}</span>
+          <small>{ROLE_LABELS[role] || role}</small>
+          <button onClick={() => supabase.auth.signOut()}><LogOut size={16}/> Sign out</button>
+        </div>
       </aside>
 
       <main>
         <header className="topbar">
           <button className="menu-button" onClick={() => setMobileNav(true)}><Menu/></button>
           <div><span className="eyebrow">{farm?.name || "MY FARM"}</span><h1>{NAV.find(n => n[0]===page)?.[1]}</h1></div>
-          <button className="refresh-button" onClick={loadData}><RefreshCw size={18}/></button>
+          <div className="topbar-actions"><span className="role-badge">{ROLE_LABELS[role] || role}</span><button className="refresh-button" onClick={loadData}><RefreshCw size={18}/></button></div>
         </header>
 
         <StatusBanner status={status.type} message={status.message}/>
@@ -548,9 +625,9 @@ export default function App() {
           <section className="hero">
             <div><h2>Good afternoon, farmer.</h2><p>Track your farm from seed propagation through field production.</p></div>
             <div className="button-row">
-              <button className="button secondary" disabled={!fields.length} onClick={() => open("irrigation")}><Plus size={17}/> Irrigation</button>
-              <button className="button secondary" disabled={!fields.length} onClick={() => open("harvest")}><Plus size={17}/> Harvest</button>
-              <button className="button primary" disabled={!fields.length} onClick={() => open("activity")}><Plus size={17}/> Field activity</button>
+              <button className="button secondary" disabled={!fields.length || !canWriteModule("irrigation")} onClick={() => open("irrigation")}><Plus size={17}/> Irrigation</button>
+              <button className="button secondary" disabled={!fields.length || !canWriteModule("harvests")} onClick={() => open("harvest")}><Plus size={17}/> Harvest</button>
+              <button className="button primary" disabled={!fields.length || !canWriteModule("activities")} onClick={() => open("activity")}><Plus size={17}/> Field activity</button>
             </div>
           </section>
           <section className="stats-grid">
@@ -741,6 +818,30 @@ export default function App() {
             {!timelineField&&<Empty text="Add a field to start a timeline."/>}
           </div>
         </SimplePage>}
+
+        {page === "users" && canManageUsers && <>
+          <section className="hero"><div><h2>Users & permissions</h2><p>Control who can view or update your farm records.</p></div><span className="security-note"><ShieldCheck size={18}/> Owner controls enabled</span></section>
+          <section className="split-grid access-grid">
+            <Card title="Farm users" subtitle="New sign-ups start as Viewer">
+              <div className="user-list">
+                {farmUsers.map(user => <article className="user-card" key={user.id}>
+                  <div className="user-avatar">{(user.full_name || user.email || "U").slice(0,1).toUpperCase()}</div>
+                  <div className="user-info"><strong>{user.full_name || "Unnamed user"}</strong><span>{user.email}</span></div>
+                  <select aria-label={`Role for ${user.full_name || user.email}`} value={user.role} disabled={user.id === session.user.id} onChange={e=>updateUser(user.id,{role:e.target.value})}>
+                    {Object.entries(ROLE_LABELS).map(([value,label])=><option value={value} key={value}>{label}</option>)}
+                  </select>
+                  <button className={user.status === "active" ? "small-action danger-action" : "small-action"} disabled={user.id === session.user.id} onClick={()=>updateUser(user.id,{status:user.status==="active"?"inactive":"active"})}>{user.status==="active"?"Deactivate":"Activate"}</button>
+                </article>)}
+              </div>
+            </Card>
+            <Card title="Activity log" subtitle="Latest changes across the farm">
+              <div className="audit-list">
+                {auditLogs.map(log => <article key={log.id}><History size={15}/><div><strong>{log.action} · {log.table_name}</strong><span>{log.actor_email || "System"} · {new Date(log.created_at).toLocaleString()}</span></div></article>)}
+                {!auditLogs.length && <Empty text="No recorded changes yet."/>}
+              </div>
+            </Card>
+          </section>
+        </>}
       </main>
 
       {mobileNav && <div className="sidebar-backdrop" onClick={() => setMobileNav(false)}/>}
@@ -898,3 +999,39 @@ function SimplePage({title,description,button,onAdd,disabled,children}){return <
 function Table({headers,children}){return <div className="data-table"><div className="table-row table-head">{headers.map(h=><span key={h}>{h}</span>)}</div>{children}</div>}
 function Field({label,children}){return <label className="field"><span>{label}</span>{children}</label>}
 function ComingSoon({page}){const item=NAV.find(n=>n[0]===page);const Icon=item?.[2]||Leaf;return <section className="coming-soon card"><div className="coming-icon"><Icon size={30}/></div><h2>{item?.[1]}</h2><p>This module is ready for the next build phase.</p></section>}
+
+function AuthScreen(){
+  const [mode,setMode]=useState("login");
+  const [form,setForm]=useState({name:"",email:"",password:""});
+  const [message,setMessage]=useState("");
+  const [busy,setBusy]=useState(false);
+  async function submit(e){
+    e.preventDefault(); setBusy(true); setMessage("");
+    const result=mode==="signup"
+      ? await supabase.auth.signUp({email:form.email,password:form.password,options:{data:{full_name:form.name}}})
+      : await supabase.auth.signInWithPassword({email:form.email,password:form.password});
+    if(result.error) setMessage(result.error.message);
+    else if(mode==="signup") setMessage("Account created. Check your email if confirmation is enabled, then sign in.");
+    setBusy(false);
+  }
+  async function resetPassword(){
+    if(!form.email){setMessage("Enter your email address first.");return;}
+    const {error}=await supabase.auth.resetPasswordForEmail(form.email,{redirectTo:window.location.origin});
+    setMessage(error?error.message:"Password reset link sent to your email.");
+  }
+  return <main className="auth-screen"><section className="auth-card">
+    <div className="auth-brand"><div className="brand-mark"><Sprout size={27}/></div><div><strong>Farm Manager</strong><span>Version 7.2 · Secure access</span></div></div>
+    <div><span className="eyebrow">{mode==="login"?"WELCOME BACK":"CREATE ACCOUNT"}</span><h1>{mode==="login"?"Sign in to your farm":"Join the farm team"}</h1><p>Use your email and password to access the records permitted for your role.</p></div>
+    <form className="form" onSubmit={submit}>
+      {mode==="signup"&&<Field label="Full name"><input required value={form.name} onChange={e=>setForm({...form,name:e.target.value})}/></Field>}
+      <Field label="Email"><input required type="email" value={form.email} onChange={e=>setForm({...form,email:e.target.value})}/></Field>
+      <Field label="Password"><input required minLength="6" type="password" value={form.password} onChange={e=>setForm({...form,password:e.target.value})}/></Field>
+      {message&&<div className="auth-message">{message}</div>}
+      <button className="button primary auth-submit" disabled={busy}>{busy?"Please wait…":mode==="login"?"Sign in":"Create account"}</button>
+    </form>
+    <div className="auth-links">
+      <button onClick={()=>{setMode(mode==="login"?"signup":"login");setMessage("")}}><UserPlus size={15}/>{mode==="login"?"Create an account":"Back to sign in"}</button>
+      {mode==="login"&&<button onClick={resetPassword}>Forgot password?</button>}
+    </div>
+  </section></main>
+}

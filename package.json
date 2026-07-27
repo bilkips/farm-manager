@@ -1,7 +1,7 @@
 {
-  "name": "farm-manager-v3",
+  "name": "farm-manager-v7-2",
   "private": true,
-  "version": "3.0.0",
+  "version": "7.2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
