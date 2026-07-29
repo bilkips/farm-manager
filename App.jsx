@@ -6,7 +6,7 @@ import {
   AlertCircle, Blocks, CalendarDays, CheckCircle2, CircleDollarSign, ClipboardList,
   Droplets, Gauge, Home, Leaf, LoaderCircle, Menu, Package, Plus, RefreshCw,
   Search, ShoppingCart, Sprout, Tractor, Users, Warehouse, Wrench, X,
-  ShieldCheck, LogOut, UserPlus, History
+  ShieldCheck, LogOut, UserPlus, History, Trash2
 } from "lucide-react";
 
 const SUPABASE_URL = "https://itlngocavjyrjgeblsmq.supabase.co";
@@ -105,6 +105,9 @@ function friendlyError(error) {
   if (message.includes('crop_id') && message.includes('not-null')) {
     return "The original crop_cycles table still requires crop_id. Run the V5.2 database-upgrade.sql script.";
   }
+  if (message.includes("Failed to send a request to the Edge Function") || message.includes("Function not found")) {
+    return "The Administrator user service is not deployed yet. Deploy the included admin-users Supabase function, then try again.";
+  }
   return message;
 }
 
@@ -136,6 +139,11 @@ export default function App() {
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
+  const [userModal, setUserModal] = useState(false);
+  const [userForm, setUserForm] = useState({
+    full_name: "", email: "", password: "", role: "viewer"
+  });
+  const [userSaving, setUserSaving] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -225,7 +233,7 @@ export default function App() {
       setHarvests(harvestRows);
       setEquipment(equipmentRows);
       setTimelineField(v => v || farmFields[0]?.id || "");
-      setStatus({ type: "success", message: "Connected securely. Live V7.2 farm data loaded." });
+      setStatus({ type: "success", message: "Connected securely. Live V7.3 farm data loaded." });
     } catch (error) {
       setStatus({ type: "error", message: friendlyError(error) });
     }
@@ -237,6 +245,8 @@ export default function App() {
   const canWrite = WRITE_ROLES.has(role) && profile?.status !== "inactive";
   const canManageUsers = role === "owner";
   const canSeeFinancials = ["owner", "manager"].includes(role);
+  const signedInName = firstName(profile?.full_name || session?.user?.user_metadata?.full_name || session?.user?.email);
+  const greeting = greetingForHour(new Date().getHours());
   const canWriteModule = module => {
     if (!canWrite) return false;
     if (["owner","manager"].includes(role)) return true;
@@ -573,11 +583,71 @@ export default function App() {
     setModal("cycle");
   }
 
+  async function invokeAdminUsers(body) {
+    const { data, error } = await supabase.functions.invoke("admin-users", { body });
+    if (error) {
+      let message = error.message;
+      try {
+        const details = await error.context?.json();
+        message = details?.error || details?.message || message;
+      } catch {
+        // Keep the original Functions error when no JSON body is available.
+      }
+      throw new Error(message);
+    }
+    if (!data?.ok) throw new Error(data?.error || "The user action could not be completed.");
+    return data;
+  }
+
+  async function createFarmUser(event) {
+    event.preventDefault();
+    if (!canManageUsers || userSaving) return;
+    setUserSaving(true);
+    setStatus({ type: "loading", message: "Creating the new farm user…" });
+    try {
+      await invokeAdminUsers({ action: "create", ...userForm });
+      setUserModal(false);
+      setUserForm({ full_name: "", email: "", password: "", role: "viewer" });
+      await loadData();
+      setStatus({ type: "success", message: `${userForm.full_name.trim()} can now sign in.` });
+    } catch (error) {
+      setStatus({ type: "error", message: friendlyError(error) });
+    } finally {
+      setUserSaving(false);
+    }
+  }
+
   async function updateUser(userId, patch) {
-    if (!canManageUsers) return;
-    const { error } = await supabase.from("farm_profiles").update(patch).eq("id", userId);
-    if (error) setStatus({ type: "error", message: friendlyError(error) });
-    else await loadData();
+    if (!canManageUsers || userSaving) return;
+    setUserSaving(true);
+    try {
+      await invokeAdminUsers({ action: "update", user_id: userId, ...patch });
+      await loadData();
+    } catch (error) {
+      setStatus({ type: "error", message: friendlyError(error) });
+    } finally {
+      setUserSaving(false);
+    }
+  }
+
+  async function deleteFarmUser(user) {
+    if (!canManageUsers || userSaving || user.id === session.user.id) return;
+    const label = user.full_name || user.email || "this user";
+    const confirmed = window.confirm(
+      `Delete ${label}'s account?\n\nThey will lose sign-in access. Existing farm records will remain.`
+    );
+    if (!confirmed) return;
+    setUserSaving(true);
+    setStatus({ type: "loading", message: `Deleting ${label}'s account…` });
+    try {
+      await invokeAdminUsers({ action: "delete", user_id: user.id });
+      await loadData();
+      setStatus({ type: "success", message: `${label}'s account was deleted.` });
+    } catch (error) {
+      setStatus({ type: "error", message: friendlyError(error) });
+    } finally {
+      setUserSaving(false);
+    }
   }
 
   if (authLoading) return <div className="auth-screen"><LoaderCircle className="spin"/><p>Opening Farm Manager…</p></div>;
@@ -622,8 +692,8 @@ export default function App() {
         </div>}
 
         {page === "dashboard" && <>
-          <section className="hero">
-            <div><h2>Good afternoon, farmer.</h2><p>Track your farm from seed propagation through field production.</p></div>
+          <section className="hero dashboard-hero">
+            <div className="dashboard-hero-copy"><span className="eyebrow">TODAY ON THE FARM</span><h2>{greeting}, {signedInName}.</h2><p>Track your farm from seed propagation through field production.</p></div>
             <div className="button-row">
               <button className="button secondary" disabled={!fields.length || !canWriteModule("irrigation")} onClick={() => open("irrigation")}><Plus size={17}/> Irrigation</button>
               <button className="button secondary" disabled={!fields.length || !canWriteModule("harvests")} onClick={() => open("harvest")}><Plus size={17}/> Harvest</button>
@@ -642,6 +712,16 @@ export default function App() {
             <button className={metrics.ready ? "alert-tile attention" : "alert-tile"} onClick={()=>setPage("nursery")}><Sprout size={18}/><span><strong>{metrics.ready}</strong> batches ready</span></button>
             <button className={metrics.lowStock ? "alert-tile attention" : "alert-tile"} onClick={()=>setPage("inventory")}><Package size={18}/><span><strong>{metrics.lowStock}</strong> low-stock items</span></button>
             <button className={serviceDue.length ? "alert-tile urgent" : "alert-tile"} onClick={()=>setPage("equipment")}><Wrench size={18}/><span><strong>{serviceDue.length}</strong> service alerts</span></button>
+          </section>
+          <section className="farm-gallery" aria-label="Farm highlights">
+            <button className="farm-photo-card" onClick={() => setPage("nursery")}>
+              <img src="/images/cabbage-nursery.webp" alt="Healthy cabbage seedlings in propagation trays"/>
+              <span><b>Nursery</b><small>Review seedlings and transplant readiness</small></span>
+            </button>
+            <button className="farm-photo-card" onClick={() => setPage("crops")}>
+              <img src="/images/capsicum-field.webp" alt="Healthy green capsicum plants growing in field rows"/>
+              <span><b>Field production</b><small>Open crop cycles and field progress</small></span>
+            </button>
           </section>
           <section className="split-grid">
             <Card title="Nursery batches" subtitle="Latest propagation activity" action="Open" onAction={() => setPage("nursery")}>
@@ -820,18 +900,22 @@ export default function App() {
         </SimplePage>}
 
         {page === "users" && canManageUsers && <>
-          <section className="hero"><div><h2>Users & permissions</h2><p>Control who can view or update your farm records.</p></div><span className="security-note"><ShieldCheck size={18}/> Owner controls enabled</span></section>
+          <section className="hero"><div><h2>Users & permissions</h2><p>Add users, assign roles, suspend access or permanently remove accounts.</p></div><div className="button-row"><span className="security-note"><ShieldCheck size={18}/> Administrator controls</span><button className="button primary" onClick={() => setUserModal(true)}><UserPlus size={17}/> Add user</button></div></section>
           <section className="split-grid access-grid">
-            <Card title="Farm users" subtitle="New sign-ups start as Viewer">
+            <Card title="Farm users" subtitle="Accounts created by the Administrator">
               <div className="user-list">
                 {farmUsers.map(user => <article className="user-card" key={user.id}>
                   <div className="user-avatar">{(user.full_name || user.email || "U").slice(0,1).toUpperCase()}</div>
-                  <div className="user-info"><strong>{user.full_name || "Unnamed user"}</strong><span>{user.email}</span></div>
-                  <select aria-label={`Role for ${user.full_name || user.email}`} value={user.role} disabled={user.id === session.user.id} onChange={e=>updateUser(user.id,{role:e.target.value})}>
+                  <div className="user-info"><strong>{user.full_name || "Unnamed user"}{user.id === session.user.id ? " (you)" : ""}</strong><span>{user.email}</span></div>
+                  <select aria-label={`Role for ${user.full_name || user.email}`} value={user.role} disabled={user.id === session.user.id || userSaving} onChange={e=>updateUser(user.id,{role:e.target.value})}>
                     {Object.entries(ROLE_LABELS).map(([value,label])=><option value={value} key={value}>{label}</option>)}
                   </select>
-                  <button className={user.status === "active" ? "small-action danger-action" : "small-action"} disabled={user.id === session.user.id} onClick={()=>updateUser(user.id,{status:user.status==="active"?"inactive":"active"})}>{user.status==="active"?"Deactivate":"Activate"}</button>
+                  <div className="user-actions">
+                    <button className={user.status === "active" ? "small-action danger-action" : "small-action"} disabled={user.id === session.user.id || userSaving} onClick={()=>updateUser(user.id,{status:user.status==="active"?"inactive":"active"})}>{user.status==="active"?"Deactivate":"Activate"}</button>
+                    <button className="small-action delete-user-action" disabled={user.id === session.user.id || userSaving} onClick={()=>deleteFarmUser(user)}><Trash2 size={14}/> Delete</button>
+                  </div>
                 </article>)}
+                {!farmUsers.length && <Empty text="No farm users found."/>}
               </div>
             </Card>
             <Card title="Activity log" subtitle="Latest changes across the farm">
@@ -845,6 +929,17 @@ export default function App() {
       </main>
 
       {mobileNav && <div className="sidebar-backdrop" onClick={() => setMobileNav(false)}/>}
+
+      {userModal && <Modal title="Add farm user" onClose={() => !userSaving && setUserModal(false)}>
+        <form className="form" onSubmit={createFarmUser}>
+          <Field label="Full name"><input required autoFocus value={userForm.full_name} onChange={e=>setUserForm({...userForm,full_name:e.target.value})} placeholder="e.g. Jane Kiptoo"/></Field>
+          <Field label="Email address"><input required type="email" value={userForm.email} onChange={e=>setUserForm({...userForm,email:e.target.value})} placeholder="jane@example.com"/></Field>
+          <Field label="Temporary password"><input required minLength="8" type="password" value={userForm.password} onChange={e=>setUserForm({...userForm,password:e.target.value})} placeholder="At least 8 characters"/></Field>
+          <Field label="Access role"><select value={userForm.role} onChange={e=>setUserForm({...userForm,role:e.target.value})}>{Object.entries(ROLE_LABELS).map(([value,label])=><option value={value} key={value}>{label}</option>)}</select></Field>
+          <p className="form-note">Give this temporary password to the user privately. They can use “Forgot password?” to set a new one.</p>
+          <div className="form-actions"><button type="button" className="button secondary" disabled={userSaving} onClick={()=>setUserModal(false)}>Cancel</button><button className="button primary" disabled={userSaving}>{userSaving?"Creating…":"Create user"}</button></div>
+        </form>
+      </Modal>}
 
       {modal && <Modal title={`${editingId ? "Edit" : "Add"} ${modalLabel(modal)}`} onClose={() => { setModal(null); setEditingId(null); }}>
         <form className="form" onSubmit={save}>
@@ -982,6 +1077,16 @@ function averageGermination(batches) {
   if (!valid.length) return "—";
   return Math.round(valid.reduce((s,b)=>s+(Number(b.germinated||0)/Number(b.seeds_sown)*100),0)/valid.length) + "%";
 }
+function greetingForHour(hour) {
+  if (hour < 12) return "Good morning";
+  if (hour < 17) return "Good afternoon";
+  return "Good evening";
+}
+function firstName(value) {
+  const raw = String(value || "Farmer").trim();
+  const name = (raw.includes("@") ? raw.split("@")[0] : raw).split(/\s+/)[0] || "Farmer";
+  return name.charAt(0).toUpperCase() + name.slice(1);
+}
 function modalLabel(type){return ({
   block:"farm block",field:"field",batch:"propagation batch",
   cycle:"crop cycle",activity:"field activity",worker:"worker",
@@ -1020,7 +1125,7 @@ function AuthScreen(){
     setMessage(error?error.message:"Password reset link sent to your email.");
   }
   return <main className="auth-screen"><section className="auth-card">
-    <div className="auth-brand"><div className="brand-mark"><Sprout size={27}/></div><div><strong>Farm Manager</strong><span>Version 7.2 · Secure access</span></div></div>
+    <div className="auth-brand"><div className="brand-mark"><Sprout size={27}/></div><div><strong>Farm Manager</strong><span>Version 7.3 · Secure access</span></div></div>
     <div><span className="eyebrow">{mode==="login"?"WELCOME BACK":"CREATE ACCOUNT"}</span><h1>{mode==="login"?"Sign in to your farm":"Join the farm team"}</h1><p>Use your email and password to access the records permitted for your role.</p></div>
     <form className="form" onSubmit={submit}>
       {mode==="signup"&&<Field label="Full name"><input required value={form.name} onChange={e=>setForm({...form,name:e.target.value})}/></Field>}
