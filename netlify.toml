@@ -1,5 +1,5 @@
 [build]
-  command = "echo 'Farm Manager V8 is already built'"
+  command = "echo 'Farm Manager V8.1 is already built'"
   publish = "."
 
 [[redirects]]
