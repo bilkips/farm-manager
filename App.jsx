@@ -108,7 +108,7 @@ function friendlyError(error) {
     return "The original crop_cycles table still requires crop_id. Run the V5.2 database-upgrade.sql script.";
   }
   if (message.includes("Failed to send a request to the Edge Function") || message.includes("Function not found")) {
-    return "The Administrator user service is not deployed yet. Deploy the included admin-users Supabase function, then try again.";
+    return "The Administrator user service could not be reached. Confirm that the super-handler Supabase function is deployed, then try again.";
   }
   return message;
 }
@@ -586,7 +586,7 @@ export default function App() {
   }
 
   async function invokeAdminUsers(body) {
-    const { data, error } = await supabase.functions.invoke("admin-users", { body });
+    const { data, error } = await supabase.functions.invoke("super-handler", { body });
     if (error) {
       let message = error.message;
       try {
