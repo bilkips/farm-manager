@@ -8,6 +8,8 @@ import {
   Search, ShoppingCart, Sprout, Tractor, Users, Warehouse, Wrench, X,
   ShieldCheck, LogOut, UserPlus, History, Trash2
 } from "lucide-react";
+import cabbageNurseryImage from "./cabbage-nursery.webp";
+import capsicumFieldImage from "./capsicum-field.webp";
 
 const SUPABASE_URL = "https://itlngocavjyrjgeblsmq.supabase.co";
 const SUPABASE_KEY = "sb_publishable_sV6zuknGzOavoAdqW2o1MQ_6GzpVKxE";
@@ -715,11 +717,11 @@ export default function App() {
           </section>
           <section className="farm-gallery" aria-label="Farm highlights">
             <button className="farm-photo-card" onClick={() => setPage("nursery")}>
-              <img src="/images/cabbage-nursery.webp" alt="Healthy cabbage seedlings in propagation trays"/>
+              <img src={cabbageNurseryImage} alt="Healthy cabbage seedlings in propagation trays"/>
               <span><b>Nursery</b><small>Review seedlings and transplant readiness</small></span>
             </button>
             <button className="farm-photo-card" onClick={() => setPage("crops")}>
-              <img src="/images/capsicum-field.webp" alt="Healthy green capsicum plants growing in field rows"/>
+              <img src={capsicumFieldImage} alt="Healthy green capsicum plants growing in field rows"/>
               <span><b>Field production</b><small>Open crop cycles and field progress</small></span>
             </button>
           </section>

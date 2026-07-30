@@ -12,23 +12,13 @@ Function. This keeps account-creation and deletion privileges off the public web
 
    `admin-users`
 
-5. Open `supabase/functions/admin-users/index.ts` from this V7.3 package.
+5. Open the top-level `admin-users-function.ts` file from this Android package.
 6. Copy the complete file into the Supabase editor, replacing the sample code.
 7. Select **Deploy function** and wait for the success message.
 
 Supabase provides `SUPABASE_URL` and the protected server key to hosted Edge Functions
 automatically. Do not paste a secret/service-role key into `App.jsx`, GitHub, Netlify or any
 browser file.
-
-## Optional CLI method
-
-From the V7.3 project folder:
-
-```bash
-supabase login
-supabase link --project-ref itlngocavjyrjgeblsmq
-supabase functions deploy admin-users
-```
 
 ## Quick test
 
