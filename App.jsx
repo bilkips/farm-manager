@@ -6,7 +6,8 @@ import {
   AlertCircle, Blocks, CalendarDays, CheckCircle2, CircleDollarSign, ClipboardList,
   Droplets, Gauge, Home, Leaf, LoaderCircle, Menu, Package, Plus, RefreshCw,
   Search, ShoppingCart, Sprout, Tractor, Users, Warehouse, Wrench, X,
-  ShieldCheck, LogOut, UserPlus, History, Trash2
+  ShieldCheck, LogOut, UserPlus, History, Trash2, BarChart3, BrainCircuit,
+  ChevronRight, Clock3, Download, FileText, ListChecks, MoreHorizontal, Wifi, WifiOff
 } from "lucide-react";
 import cabbageNurseryImage from "./cabbage-nursery.webp";
 import capsicumFieldImage from "./capsicum-field.webp";
@@ -17,6 +18,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 const NAV = [
   ["dashboard", "Dashboard", Home],
+  ["planner", "Smart Planner", BrainCircuit],
   ["blocks", "Farm Blocks", Blocks],
   ["fields", "Fields", Tractor],
   ["nursery", "Nursery", Sprout],
@@ -108,7 +110,7 @@ function friendlyError(error) {
     return "The original crop_cycles table still requires crop_id. Run the V5.2 database-upgrade.sql script.";
   }
   if (message.includes("Failed to send a request to the Edge Function") || message.includes("Function not found")) {
-    return "The Administrator user service could not be reached. Confirm that the super-handler Supabase function is deployed, then try again.";
+    return "The Administrator user service could not be reached. Confirm that the existing super-handler Supabase function is deployed, then try again.";
   }
   return message;
 }
@@ -146,6 +148,7 @@ export default function App() {
     full_name: "", email: "", password: "", role: "viewer"
   });
   const [userSaving, setUserSaving] = useState(false);
+  const [isOnline, setIsOnline] = useState(() => navigator.onLine);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -157,6 +160,17 @@ export default function App() {
       setAuthLoading(false);
     });
     return () => listener.subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    const markOnline = () => setIsOnline(true);
+    const markOffline = () => setIsOnline(false);
+    window.addEventListener("online", markOnline);
+    window.addEventListener("offline", markOffline);
+    return () => {
+      window.removeEventListener("online", markOnline);
+      window.removeEventListener("offline", markOffline);
+    };
   }, []);
 
   const loadData = useCallback(async () => {
@@ -235,7 +249,7 @@ export default function App() {
       setHarvests(harvestRows);
       setEquipment(equipmentRows);
       setTimelineField(v => v || farmFields[0]?.id || "");
-      setStatus({ type: "success", message: "Connected securely. Live V7.3 farm data loaded." });
+      setStatus({ type: "success", message: "Connected securely. Live V8 Smart Farm data loaded." });
     } catch (error) {
       setStatus({ type: "error", message: friendlyError(error) });
     }
@@ -253,18 +267,19 @@ export default function App() {
     if (!canWrite) return false;
     if (["owner","manager"].includes(role)) return true;
     if (role === "storekeeper") return ["inventory","equipment"].includes(module);
-    if (role === "supervisor") return ["nursery","crops","activities","calendar","workers","irrigation","sprays","harvests"].includes(module);
+    if (role === "supervisor") return ["planner","nursery","crops","activities","calendar","workers","irrigation","sprays","harvests"].includes(module);
     return false;
   };
   const typeModule = {block:"blocks",field:"fields",batch:"nursery",cycle:"crops",activity:"activities",worker:"workers",irrigation:"irrigation",spray:"sprays",inventory:"inventory",harvest:"harvests",equipment:"equipment"};
   const tableModule = {farm_blocks:"blocks",fields:"fields",propagation_batches:"nursery",crop_cycles:"crops",field_activities:"activities",workers:"workers",irrigation_records:"irrigation",spray_records:"sprays",inventory_items:"inventory",harvest_records:"harvests",equipment:"equipment"};
+  const today = localDateISO();
+  const weekEnd = addDaysISO(today, 7);
 
   const metrics = useMemo(() => {
     const totalArea = fields.reduce((sum, f) => sum + Number(f.area_acres || 0), 0);
     const activeFields = fields.filter(f => ["growing","active","planted"].includes(String(f.status || "").toLowerCase())).length;
     const seedlings = batches.reduce((sum, b) => sum + Math.max(0, Number(b.germinated || 0) - Number(b.losses || 0)), 0);
     const ready = batches.filter(b => String(b.status).toLowerCase() === "ready").length;
-    const today = new Date().toISOString().slice(0,10);
     const dueToday = activities.filter(a => a.scheduled_date === today && a.status !== "completed").length;
     const overdue = activities.filter(a => a.scheduled_date && a.scheduled_date < today && a.status !== "completed").length;
     const lowStock = inventory.filter(i => Number(i.quantity_on_hand || 0) <= Number(i.reorder_level || 0)).length;
@@ -272,8 +287,24 @@ export default function App() {
     const fieldCosts = activities.reduce((s,a) => s + Number(a.labour_cost || 0) + Number(a.input_cost || 0), 0)
       + irrigation.reduce((s,r) => s + Number(r.cost || 0), 0)
       + sprays.reduce((s,r) => s + Number(r.cost || 0), 0);
-    return { totalArea, activeFields, seedlings, ready, dueToday, overdue, lowStock, revenue, fieldCosts, profit: revenue-fieldCosts };
-  }, [fields, batches, activities, inventory, harvests, irrigation, sprays]);
+    const countableTasks = activities.filter(a => a.status !== "cancelled");
+    const completedTasks = countableTasks.filter(a => a.status === "completed").length;
+    const taskCompletion = countableTasks.length ? Math.round(completedTasks / countableTasks.length * 100) : 0;
+    const upcoming7 = activities.filter(a => a.scheduled_date > today && a.scheduled_date <= weekEnd && !["completed","cancelled"].includes(a.status)).length;
+    const inventoryValue = inventory.reduce((s,i) => s + Number(i.quantity_on_hand || 0) * Number(i.unit_cost || 0), 0);
+    const totalFuel = irrigation.reduce((s,r) => s + Number(r.fuel_litres || 0), 0);
+    const irrigationHours = irrigation.reduce((s,r) => s + Number(r.duration_hours || 0), 0);
+    const pressureRecords = irrigation.filter(r => Number(r.pressure_bar) > 0);
+    const averagePressure = pressureRecords.length
+      ? pressureRecords.reduce((s,r) => s + Number(r.pressure_bar || 0), 0) / pressureRecords.length
+      : 0;
+    const harvestedQuantity = harvests.reduce((s,h) => s + Number(h.quantity || 0), 0);
+    return {
+      totalArea, activeFields, seedlings, ready, dueToday, overdue, lowStock,
+      revenue, fieldCosts, profit: revenue-fieldCosts, completedTasks, taskCompletion,
+      upcoming7, inventoryValue, totalFuel, irrigationHours, averagePressure, harvestedQuantity
+    };
+  }, [fields, batches, activities, inventory, harvests, irrigation, sprays, today, weekEnd]);
 
   const blockName = id => blocks.find(b => b.id === id)?.name || "Unknown block";
   const fieldName = id => fields.find(f => f.id === id)?.name || "Unknown field";
@@ -293,12 +324,139 @@ export default function App() {
     return !query || values.some(value => String(value ?? "").toLowerCase().includes(query));
   };
   const serviceDue = equipment.filter(e => {
-    const today = new Date().toISOString().slice(0,10);
     const dueByDate = e.next_service_date && e.next_service_date <= today;
     const interval = Number(e.service_interval_hours || 0);
     const hours = Number(e.current_hours || 0);
     return e.status === "service due" || dueByDate || (interval > 0 && hours >= interval);
   });
+
+  const weekActivities = useMemo(() => activities
+    .filter(a => a.scheduled_date >= today && a.scheduled_date <= weekEnd && a.status !== "cancelled")
+    .slice()
+    .sort((a,b) => String(a.scheduled_date).localeCompare(String(b.scheduled_date))),
+  [activities, today, weekEnd]);
+
+  const fieldPerformance = useMemo(() => fields.map(field => {
+    const fieldCycles = cycles.filter(c => c.field_id === field.id);
+    const fieldActivities = activities.filter(a => a.field_id === field.id);
+    const fieldIrrigation = irrigation.filter(r => r.field_id === field.id);
+    const fieldSprays = sprays.filter(r => r.field_id === field.id);
+    const fieldHarvests = harvests.filter(h => h.field_id === field.id);
+    const revenue = fieldHarvests.reduce((s,h) => s + Number(h.quantity || 0) * Number(h.price_per_unit || 0), 0);
+    const costs = fieldActivities.reduce((s,a) => s + Number(a.labour_cost || 0) + Number(a.input_cost || 0), 0)
+      + fieldIrrigation.reduce((s,r) => s + Number(r.cost || 0), 0)
+      + fieldSprays.reduce((s,r) => s + Number(r.cost || 0), 0);
+    const yieldQuantity = fieldHarvests.reduce((s,h) => s + Number(h.quantity || 0), 0);
+    const activeCycle = fieldCycles.find(c => !["completed","harvested","closed"].includes(String(c.status || "").toLowerCase())) || fieldCycles[0];
+    return {
+      id: field.id,
+      name: field.name,
+      crop: activeCycle ? `${activeCycle.crop_name}${activeCycle.variety ? " · " + activeCycle.variety : ""}` : "No active crop",
+      area: Number(field.area_acres || 0),
+      yieldQuantity,
+      revenue,
+      costs,
+      profit: revenue - costs
+    };
+  }).sort((a,b) => b.profit - a.profit),
+  [fields, cycles, activities, irrigation, sprays, harvests]);
+
+  const smartItems = useMemo(() => {
+    const items = [];
+    activities.forEach(activity => {
+      if (!activity.scheduled_date || ["completed","cancelled"].includes(activity.status)) return;
+      if (activity.scheduled_date > weekEnd) return;
+      const overdue = activity.scheduled_date < today;
+      const dueToday = activity.scheduled_date === today;
+      items.push({
+        id: `activity-${activity.id}`,
+        priority: overdue ? "urgent" : dueToday ? "high" : "normal",
+        date: activity.scheduled_date,
+        title: `${capitalize(activity.activity_type)} · ${fieldName(activity.field_id)}`,
+        detail: overdue ? `${daysBetween(activity.scheduled_date, today)} day(s) overdue` : dueToday ? "Due today" : `Scheduled ${formatShortDate(activity.scheduled_date)}`,
+        page: "calendar"
+      });
+    });
+    batches.forEach(batch => {
+      if (!batch.expected_transplant_date || batch.status === "transplanted" || batch.expected_transplant_date > weekEnd) return;
+      const overdue = batch.expected_transplant_date < today;
+      items.push({
+        id: `batch-${batch.id}`,
+        priority: overdue ? "urgent" : batch.expected_transplant_date === today ? "high" : "normal",
+        date: batch.expected_transplant_date,
+        title: `Transplant ${batch.crop_name}${batch.variety ? " · " + batch.variety : ""}`,
+        detail: overdue ? "Expected transplant date has passed" : `Expected ${formatShortDate(batch.expected_transplant_date)}`,
+        page: "nursery"
+      });
+    });
+    const harvestHorizon = addDaysISO(today, 14);
+    cycles.forEach(cycle => {
+      if (!cycle.expected_harvest_date || ["completed","harvested","closed"].includes(String(cycle.status || "").toLowerCase()) || cycle.expected_harvest_date > harvestHorizon) return;
+      const overdue = cycle.expected_harvest_date < today;
+      items.push({
+        id: `harvest-${cycle.id}`,
+        priority: overdue ? "high" : "normal",
+        date: cycle.expected_harvest_date,
+        title: `Harvest window · ${cycle.crop_name}`,
+        detail: `${fieldName(cycle.field_id)} · ${overdue ? "expected date passed" : formatShortDate(cycle.expected_harvest_date)}`,
+        page: "crops"
+      });
+    });
+    inventory.forEach(item => {
+      const stock = Number(item.quantity_on_hand || 0);
+      const reorder = Number(item.reorder_level || 0);
+      if (stock > reorder) return;
+      const suggested = Math.max(0, reorder * 2 - stock);
+      items.push({
+        id: `stock-${item.id}`,
+        priority: stock <= 0 ? "urgent" : "high",
+        date: "",
+        title: `Restock ${item.item_name}`,
+        detail: `${stock} ${item.unit || "units"} remaining${suggested ? ` · suggested order ${suggested}` : ""}`,
+        page: "inventory"
+      });
+    });
+    serviceDue.forEach(item => items.push({
+      id: `service-${item.id}`,
+      priority: "urgent",
+      date: item.next_service_date || "",
+      title: `Service ${item.name}`,
+      detail: item.next_service_date ? `Due ${formatShortDate(item.next_service_date)}` : `${item.current_hours || 0} operating hours recorded`,
+      page: "equipment"
+    }));
+    const order = { urgent: 0, high: 1, normal: 2 };
+    return items.sort((a,b) => order[a.priority] - order[b.priority] || String(a.date || "9999").localeCompare(String(b.date || "9999")));
+  }, [activities, batches, cycles, inventory, serviceDue, today, weekEnd, fields]);
+
+  function openSmartItem(item) {
+    setSearchTerm("");
+    setPage(item.page);
+  }
+
+  function printReport() {
+    window.setTimeout(() => window.print(), 120);
+  }
+
+  function downloadFieldReport() {
+    if (!canSeeFinancials) return;
+    const rows = [
+      ["Field", "Crop", "Area acres", "Harvest quantity", "Revenue KES", "Recorded costs KES", "Estimated profit KES"],
+      ...fieldPerformance.map(row => [
+        row.name, row.crop, row.area, row.yieldQuantity,
+        row.revenue.toFixed(2), row.costs.toFixed(2), row.profit.toFixed(2)
+      ])
+    ];
+    const csv = rows.map(row => row.map(csvCell).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `farm-manager-v8-field-report-${today}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
 
   function open(type) {
     if (!canWriteModule(typeModule[type])) return setStatus({type:"error",message:"Your role cannot add records in this section."});
@@ -665,7 +823,7 @@ export default function App() {
       <aside className={`sidebar ${mobileNav ? "open" : ""}`}>
         <div className="brand">
           <div className="brand-mark"><Sprout size={25}/></div>
-          <div><strong>Farm Manager</strong><span>Nursery & production</span></div>
+          <div><strong>Farm Manager</strong><span>V8 · Smart Farm</span></div>
           <button className="mobile-close" onClick={() => setMobileNav(false)}><X/></button>
         </div>
         <nav>{visibleNav.map(([id,label,Icon]) => (
@@ -684,7 +842,11 @@ export default function App() {
         <header className="topbar">
           <button className="menu-button" onClick={() => setMobileNav(true)}><Menu/></button>
           <div><span className="eyebrow">{farm?.name || "MY FARM"}</span><h1>{NAV.find(n => n[0]===page)?.[1]}</h1></div>
-          <div className="topbar-actions"><span className="role-badge">{ROLE_LABELS[role] || role}</span><button className="refresh-button" onClick={loadData}><RefreshCw size={18}/></button></div>
+          <div className="topbar-actions">
+            <span className={`connection-pill ${isOnline ? "online" : "offline"}`}>{isOnline ? <Wifi size={14}/> : <WifiOff size={14}/>}<span>{isOnline ? "Online" : "Offline"}</span></span>
+            <span className="role-badge">{ROLE_LABELS[role] || role}</span>
+            <button className="refresh-button" onClick={loadData}><RefreshCw size={18}/></button>
+          </div>
         </header>
 
         <StatusBanner status={status.type} message={status.message}/>
@@ -695,7 +857,7 @@ export default function App() {
 
         {page === "dashboard" && <>
           <section className="hero dashboard-hero">
-            <div className="dashboard-hero-copy"><span className="eyebrow">TODAY ON THE FARM</span><h2>{greeting}, {signedInName}.</h2><p>Track your farm from seed propagation through field production.</p></div>
+            <div className="dashboard-hero-copy"><span className="eyebrow">V8 SMART FARM</span><h2>{greeting}, {signedInName}.</h2><p>Your live records now create a practical priority list for the farm.</p></div>
             <div className="button-row">
               <button className="button secondary" disabled={!fields.length || !canWriteModule("irrigation")} onClick={() => open("irrigation")}><Plus size={17}/> Irrigation</button>
               <button className="button secondary" disabled={!fields.length || !canWriteModule("harvests")} onClick={() => open("harvest")}><Plus size={17}/> Harvest</button>
@@ -707,7 +869,7 @@ export default function App() {
             <Stat label="Fields" value={fields.length} detail={`${metrics.totalArea.toFixed(1)} acres mapped`} onClick={() => setPage("fields")}/>
             <Stat label="Activities today" value={metrics.dueToday} detail={`${metrics.overdue} overdue tasks`} onClick={() => setPage("calendar")}/>
             <Stat label="Low stock" value={metrics.lowStock} detail="Items at reorder level" onClick={() => setPage("inventory")}/>
-            <Stat label="Revenue" value={money(metrics.revenue)} detail={`Profit ${money(metrics.profit)}`} onClick={() => setPage("expenses")}/>
+            {canSeeFinancials && <Stat label="Revenue" value={money(metrics.revenue)} detail={`Profit ${money(metrics.profit)}`} onClick={() => setPage("expenses")}/>}
           </section>
           <section className="alert-center">
             <button className={metrics.overdue ? "alert-tile urgent" : "alert-tile"} onClick={()=>setPage("calendar")}><AlertCircle size={18}/><span><strong>{metrics.overdue}</strong> overdue activities</span></button>
@@ -715,6 +877,12 @@ export default function App() {
             <button className={metrics.lowStock ? "alert-tile attention" : "alert-tile"} onClick={()=>setPage("inventory")}><Package size={18}/><span><strong>{metrics.lowStock}</strong> low-stock items</span></button>
             <button className={serviceDue.length ? "alert-tile urgent" : "alert-tile"} onClick={()=>setPage("equipment")}><Wrench size={18}/><span><strong>{serviceDue.length}</strong> service alerts</span></button>
           </section>
+          <Card title="Smart priorities" subtitle={`${smartItems.length} action${smartItems.length === 1 ? "" : "s"} identified from current farm records`} action="Open planner" onAction={() => setPage("planner")}>
+            <div className="priority-list compact">
+              {smartItems.slice(0,4).map(item => <PriorityItem key={item.id} item={item} onOpen={() => openSmartItem(item)}/>)}
+              {!smartItems.length && <Empty text="Everything recorded is on track. New due dates and stock levels will appear here automatically."/>}
+            </div>
+          </Card>
           <section className="farm-gallery" aria-label="Farm highlights">
             <button className="farm-photo-card" onClick={() => setPage("nursery")}>
               <img src={cabbageNurseryImage} alt="Healthy cabbage seedlings in propagation trays"/>
@@ -742,6 +910,51 @@ export default function App() {
             <div className="lifecycle">{["Seed lot","Propagation","Seedlings","Transplant","Crop cycle","Harvest"].map((s,i) =>
               <div className="life-step" key={s}><span>{i+1}</span><b>{s}</b></div>)}</div>
           </Card>
+        </>}
+
+        {page === "planner" && <>
+          <section className="hero smart-hero">
+            <div><span className="eyebrow">V8 SMART PLANNER</span><h2>The next seven days, organized</h2><p>Priorities are generated automatically from activities, transplant dates, harvest windows, stock levels and equipment service records.</p></div>
+            <button className="button primary" disabled={!fields.length || !canWriteModule("activities")} onClick={() => open("activity")}><Plus size={17}/> Schedule activity</button>
+          </section>
+          <section className="stats-grid planner-stats">
+            <Stat label="Urgent actions" value={smartItems.filter(item => item.priority === "urgent").length} detail="Needs attention first"/>
+            <Stat label="Due today" value={metrics.dueToday} detail={`${metrics.overdue} already overdue`} onClick={() => setPage("calendar")}/>
+            <Stat label="Next 7 days" value={metrics.upcoming7} detail="Planned field activities" onClick={() => setPage("calendar")}/>
+            <Stat label="Task completion" value={`${metrics.taskCompletion}%`} detail={`${metrics.completedTasks} tasks completed`}/>
+          </section>
+          <section className="planner-grid">
+            <Card title="Priority inbox" subtitle="Highest-impact work first">
+              <div className="priority-list">
+                {smartItems.map(item => <PriorityItem key={item.id} item={item} onOpen={() => openSmartItem(item)}/>)}
+                {!smartItems.length && <Empty text="No urgent, due or upcoming actions found."/>}
+              </div>
+            </Card>
+            <Card title="7-day work plan" subtitle={`${formatShortDate(today)} to ${formatShortDate(weekEnd)}`}>
+              <div className="week-list">
+                {weekActivities.map(activity => <ScheduleItem key={activity.id} activity={activity} field={fieldName(activity.field_id)} worker={workerName(activity.worker_id)} onComplete={activity.status !== "completed" && canWriteModule("activities") ? () => completeActivity(activity.id) : null}/>)}
+                {!weekActivities.length && <Empty text="No activities are scheduled in the next seven days."/>}
+              </div>
+            </Card>
+          </section>
+          <section className="split-grid">
+            <Card title="Irrigation performance" subtitle="Summary from recorded reel and field runs">
+              <div className="insight-grid">
+                <Mini label="Recorded runs" value={irrigation.length}/>
+                <Mini label="Operating hours" value={metrics.irrigationHours.toFixed(1)}/>
+                <Mini label="Fuel used (L)" value={metrics.totalFuel.toFixed(1)}/>
+                <Mini label="Average pressure" value={metrics.averagePressure ? `${metrics.averagePressure.toFixed(1)} bar` : "—"}/>
+              </div>
+            </Card>
+            <Card title="Stock & service watch" subtitle="Automatic operational safeguards">
+              <div className="insight-grid">
+                <Mini label="Low-stock items" value={metrics.lowStock}/>
+                <Mini label="Stock value" value={money(metrics.inventoryValue)}/>
+                <Mini label="Service alerts" value={serviceDue.length}/>
+                <Mini label="Equipment records" value={equipment.length}/>
+              </div>
+            </Card>
+          </section>
         </>}
 
         {page === "blocks" && <SimplePage title="Farm Blocks" description="Group fields into farm management areas." button="Add block" onAdd={() => open("block")}>
@@ -805,8 +1018,6 @@ export default function App() {
               <span>{fieldName(a.field_id)}</span>
               <span>{a.scheduled_date || "No date"}</span>
               <span className="activity-status"><span className="pill">{a.status || "planned"}</span>
-                <button className="small-action" onClick={() => edit("activity", a)}>Edit</button>
-                <button className="small-action danger-action" onClick={() => deleteItem("field_activities", a.id, `${a.activity_type} activity`)}>Delete</button>
                 <div className="row-actions"><button className="small-action" onClick={() => edit("activity", a)}>Edit</button><button className="small-action danger-action" onClick={() => deleteItem("field_activities", a.id, `${a.activity_type} activity`)}>Delete</button>{a.status !== "completed" && <button className="small-action" onClick={() => completeActivity(a.id)}>Complete</button>}</div></span>
             </div>)}
             {!activities.length && <Empty text="No field activities yet."/>}
@@ -816,7 +1027,6 @@ export default function App() {
         {page === "calendar" && <SimplePage title="Work Calendar" description="See upcoming and overdue farm work." button="Schedule activity" disabled={!fields.length} onAdd={() => open("activity")}>
           <div className="calendar-list">
             {activities.slice().sort((a,b)=>String(a.scheduled_date).localeCompare(String(b.scheduled_date))).map(a => {
-              const today = new Date().toISOString().slice(0,10);
               const overdue = a.scheduled_date < today && a.status !== "completed";
               return <article className={`calendar-item ${overdue ? "overdue" : ""}`} key={a.id}>
                 <div className="calendar-date"><strong>{a.scheduled_date || "—"}</strong><span>{overdue ? "Overdue" : a.status}</span></div>
@@ -887,18 +1097,45 @@ export default function App() {
           </Table>
         </SimplePage>}
 
-        {page === "reports" && <SimplePage title="Field Timeline" description="A chronological field record from nursery through harvest.">
-          <div className="timeline-filter"><Field label="Select field"><select value={timelineField} onChange={e=>setTimelineField(e.target.value)}>{fields.map(f=><option key={f.id} value={f.id}>{f.name}</option>)}</select></Field></div>
-          <div className="timeline">
-            {[
-              ...cycles.filter(x=>x.field_id===timelineField).map(x=>({date:x.planting_date,title:`Crop cycle: ${x.crop_name}`,detail:`${x.variety||""} · ${x.status}`})),
-              ...activities.filter(x=>x.field_id===timelineField).map(x=>({date:x.scheduled_date,title:`Activity: ${x.activity_type}`,detail:`${x.status} · ${money(Number(x.labour_cost||0)+Number(x.input_cost||0))}`})),
-              ...irrigation.filter(x=>x.field_id===timelineField).map(x=>({date:x.irrigation_date,title:"Irrigation",detail:`${x.duration_hours||0} hr · ${x.pressure_bar||0} bar · ${x.system_type}`})),
-              ...sprays.filter(x=>x.field_id===timelineField).map(x=>({date:x.spray_date,title:`Spray: ${x.product_name}`,detail:`PHI ${x.phi_days||0} days · ${x.target_problem||""}`})),
-              ...harvests.filter(x=>x.field_id===timelineField).map(x=>({date:x.harvest_date,title:`Harvest: ${x.quantity||0} ${x.unit}`,detail:`Grade ${x.grade} · ${money(Number(x.quantity||0)*Number(x.price_per_unit||0))}`}))
-            ].sort((a,b)=>String(b.date).localeCompare(String(a.date))).map((x,i)=><article className="timeline-item" key={`${x.date}-${i}`}><span>{x.date||"—"}</span><div><strong>{x.title}</strong><p>{x.detail}</p></div></article>)}
-            {!timelineField&&<Empty text="Add a field to start a timeline."/>}
+        {page === "reports" && <SimplePage title="Analytics & Reports" description="Field performance, profitability and a complete production timeline."
+          button="Print / Save PDF" buttonIcon={FileText} onAdd={printReport}>
+          <div className="print-heading"><h2>{farm?.name || "Farm Manager"}</h2><p>V8 Smart Farm report · generated {formatLongDate(today)}</p></div>
+          <div className="report-toolbar">
+            <span>Reports use the live records already saved in Farm Manager.</span>
+            {canSeeFinancials && <button className="button secondary" onClick={downloadFieldReport}><Download size={16}/> Download field CSV</button>}
           </div>
+          <div className="finance-grid report-kpis">
+            {canSeeFinancials && <Stat label="Estimated profit" value={money(metrics.profit)} detail="Revenue minus recorded costs"/>}
+            <Stat label="Task completion" value={`${metrics.taskCompletion}%`} detail={`${metrics.completedTasks} completed activities`}/>
+            <Stat label="Harvest recorded" value={metrics.harvestedQuantity.toLocaleString()} detail="Across all grades and units"/>
+            <Stat label="Irrigation fuel" value={`${metrics.totalFuel.toFixed(1)} L`} detail={`${metrics.irrigationHours.toFixed(1)} operating hours`}/>
+          </div>
+          {canSeeFinancials && <section className="report-section">
+            <header><div><h3>Field performance</h3><p>Revenue, recorded operating costs and estimated result by field.</p></div><BarChart3 size={21}/></header>
+            <Table headers={["Field / crop","Area / harvest","Revenue / costs","Estimated result"]}>
+              {fieldPerformance.map(row => <div className="table-row" key={row.id}>
+                <strong>{row.name}<small>{row.crop}</small></strong>
+                <span>{row.area.toFixed(1)} acres<small>{row.yieldQuantity.toLocaleString()} harvest units</small></span>
+                <span>{money(row.revenue)}<small>Costs {money(row.costs)}</small></span>
+                <span className={row.profit < 0 ? "negative-value" : "positive-value"}>{money(row.profit)}</span>
+              </div>)}
+              {!fieldPerformance.length && <Empty text="Add fields and production records to generate analytics."/>}
+            </Table>
+          </section>}
+          <section className="report-section timeline-report">
+            <header><div><h3>Field timeline</h3><p>A chronological record from planting through harvest.</p></div></header>
+            <div className="timeline-filter"><Field label="Select field"><select value={timelineField} onChange={e=>setTimelineField(e.target.value)}>{fields.map(f=><option key={f.id} value={f.id}>{f.name}</option>)}</select></Field></div>
+            <div className="timeline">
+              {[
+                ...cycles.filter(x=>x.field_id===timelineField).map(x=>({date:x.planting_date,title:`Crop cycle: ${x.crop_name}`,detail:`${x.variety||""} · ${x.status}`})),
+                ...activities.filter(x=>x.field_id===timelineField).map(x=>({date:x.scheduled_date,title:`Activity: ${x.activity_type}`,detail:`${x.status} · ${money(Number(x.labour_cost||0)+Number(x.input_cost||0))}`})),
+                ...irrigation.filter(x=>x.field_id===timelineField).map(x=>({date:x.irrigation_date,title:"Irrigation",detail:`${x.duration_hours||0} hr · ${x.pressure_bar||0} bar · ${x.system_type}`})),
+                ...sprays.filter(x=>x.field_id===timelineField).map(x=>({date:x.spray_date,title:`Spray: ${x.product_name}`,detail:`PHI ${x.phi_days||0} days · ${x.target_problem||""}`})),
+                ...harvests.filter(x=>x.field_id===timelineField).map(x=>({date:x.harvest_date,title:`Harvest: ${x.quantity||0} ${x.unit}`,detail:`Grade ${x.grade} · ${money(Number(x.quantity||0)*Number(x.price_per_unit||0))}`}))
+              ].sort((a,b)=>String(b.date).localeCompare(String(a.date))).map((x,i)=><article className="timeline-item" key={`${x.date}-${i}`}><span>{x.date||"—"}</span><div><strong>{x.title}</strong><p>{x.detail}</p></div></article>)}
+              {!timelineField&&<Empty text="Add a field to start a timeline."/>}
+            </div>
+          </section>
         </SimplePage>}
 
         {page === "users" && canManageUsers && <>
@@ -929,6 +1166,13 @@ export default function App() {
           </section>
         </>}
       </main>
+
+      <nav className="mobile-tabbar" aria-label="Quick navigation">
+        <button className={page === "dashboard" ? "active" : ""} onClick={() => setPage("dashboard")}><Home size={20}/><span>Home</span></button>
+        <button className={page === "planner" ? "active" : ""} onClick={() => setPage("planner")}><BrainCircuit size={20}/><span>Planner</span></button>
+        <button className={page === "calendar" ? "active" : ""} onClick={() => setPage("calendar")}><CalendarDays size={20}/><span>Calendar</span></button>
+        <button onClick={() => setMobileNav(true)}><MoreHorizontal size={20}/><span>More</span></button>
+      </nav>
 
       {mobileNav && <div className="sidebar-backdrop" onClick={() => setMobileNav(false)}/>}
 
@@ -1079,6 +1323,38 @@ function averageGermination(batches) {
   if (!valid.length) return "—";
   return Math.round(valid.reduce((s,b)=>s+(Number(b.germinated||0)/Number(b.seeds_sown)*100),0)/valid.length) + "%";
 }
+function localDateISO(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+function addDaysISO(iso, days) {
+  const date = new Date(`${iso}T12:00:00`);
+  date.setDate(date.getDate() + days);
+  return localDateISO(date);
+}
+function daysBetween(from, to) {
+  const start = Date.parse(`${from}T00:00:00Z`);
+  const end = Date.parse(`${to}T00:00:00Z`);
+  return Math.max(0, Math.round((end - start) / 86400000));
+}
+function formatShortDate(iso) {
+  if (!iso) return "No date";
+  return new Date(`${iso}T12:00:00`).toLocaleDateString("en-KE", { day: "numeric", month: "short" });
+}
+function formatLongDate(iso) {
+  if (!iso) return "";
+  return new Date(`${iso}T12:00:00`).toLocaleDateString("en-KE", { day: "numeric", month: "long", year: "numeric" });
+}
+function capitalize(value) {
+  const text = String(value || "").replaceAll("_", " ");
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+function csvCell(value) {
+  const text = String(value ?? "");
+  return `"${text.replaceAll('"', '""')}"`;
+}
 function greetingForHour(hour) {
   if (hour < 12) return "Good morning";
   if (hour < 17) return "Good afternoon";
@@ -1102,7 +1378,9 @@ function Mini({label,value}){return <article className="mini"><strong>{value}</s
 function Card({title,subtitle,action,onAction,children}){return <section className="card"><header className="card-header"><div><h3>{title}</h3><p>{subtitle}</p></div>{action&&<button onClick={onAction}>{action}</button>}</header>{children}</section>}
 function Record({Icon,title,subtitle,badge,onEdit,onDelete}){return <div className="record"><div className="record-icon"><Icon size={18}/></div><div className="record-main"><strong>{title}</strong><span>{subtitle}</span></div><span className="row-actions"><span className="pill">{badge}</span>{onEdit&&<button className="small-action" onClick={onEdit}>Edit</button>}{onDelete&&<button className="small-action danger-action" onClick={onDelete}>Delete</button>}</span></div>}
 function Empty({text}){return <div className="empty">{text}</div>}
-function SimplePage({title,description,button,onAdd,disabled,children}){return <><section className="hero"><div><h2>{title}</h2><p>{description}</p></div><button className="button primary" disabled={disabled} onClick={onAdd}><Plus size={17}/>{button}</button></section><section className="card">{children}</section></>}
+function PriorityItem({item,onOpen}){return <button className={`priority-item ${item.priority}`} onClick={onOpen}><span className="priority-icon"><ListChecks size={17}/></span><span className="priority-copy"><strong>{item.title}</strong><small>{item.detail}</small></span><span className={`priority-badge ${item.priority}`}>{item.priority}</span><ChevronRight size={17}/></button>}
+function ScheduleItem({activity,field,worker,onComplete}){return <article className="schedule-item"><div className="schedule-date"><Clock3 size={15}/><strong>{formatShortDate(activity.scheduled_date)}</strong></div><div><strong>{capitalize(activity.activity_type)}</strong><span>{field} · {worker}</span></div><span className="pill">{activity.status || "planned"}</span>{onComplete&&<button className="small-action" onClick={onComplete}>Complete</button>}</article>}
+function SimplePage({title,description,button,buttonIcon:ButtonIcon=Plus,onAdd,disabled,children}){return <><section className="hero"><div><h2>{title}</h2><p>{description}</p></div>{button&&<button className="button primary" disabled={disabled} onClick={onAdd}><ButtonIcon size={17}/>{button}</button>}</section><section className="card">{children}</section></>}
 function Table({headers,children}){return <div className="data-table"><div className="table-row table-head">{headers.map(h=><span key={h}>{h}</span>)}</div>{children}</div>}
 function Field({label,children}){return <label className="field"><span>{label}</span>{children}</label>}
 function ComingSoon({page}){const item=NAV.find(n=>n[0]===page);const Icon=item?.[2]||Leaf;return <section className="coming-soon card"><div className="coming-icon"><Icon size={30}/></div><h2>{item?.[1]}</h2><p>This module is ready for the next build phase.</p></section>}
@@ -1127,7 +1405,7 @@ function AuthScreen(){
     setMessage(error?error.message:"Password reset link sent to your email.");
   }
   return <main className="auth-screen"><section className="auth-card">
-    <div className="auth-brand"><div className="brand-mark"><Sprout size={27}/></div><div><strong>Farm Manager</strong><span>Version 7.3 · Secure access</span></div></div>
+    <div className="auth-brand"><div className="brand-mark"><Sprout size={27}/></div><div><strong>Farm Manager</strong><span>Version 8.0 · Smart Farm</span></div></div>
     <div><span className="eyebrow">{mode==="login"?"WELCOME BACK":"CREATE ACCOUNT"}</span><h1>{mode==="login"?"Sign in to your farm":"Join the farm team"}</h1><p>Use your email and password to access the records permitted for your role.</p></div>
     <form className="form" onSubmit={submit}>
       {mode==="signup"&&<Field label="Full name"><input required value={form.name} onChange={e=>setForm({...form,name:e.target.value})}/></Field>}

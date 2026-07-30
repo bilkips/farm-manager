@@ -1,51 +1,47 @@
-# Farm Manager V7.3 — Android Flat Package
+# Farm Manager V8 — Smart Farm
 
-This phone-friendly package contains no required subfolders. Every file can be uploaded at
-the top level of the GitHub repository, even when Android flattens extracted files.
-
-V7.3 upgrades the working V7.2 farm system without changing the existing farm-data structure.
+This Android-friendly package upgrades the working V7.3 system to V8 without changing
+the existing database structure, user accounts, permissions or farm records.
 
 ## What is new
 
-- Dashboard greeting uses the signed-in user's first name and the current time:
-  `Good morning, Billy`, `Good afternoon, Billy`, or `Good evening, Billy`
-- Three original farm photographs are bundled locally for the dashboard and imported from the
-  top level
-- Owner / Administrator can create users with a name, email, temporary password and role
-- Owner / Administrator can activate, deactivate and permanently delete user accounts
-- The signed-in Administrator cannot demote, deactivate or delete their own account
-- User administration runs inside a protected Supabase Edge Function; the browser keeps using
-  the public publishable key
+- Smart Planner automatically prioritizes overdue field work, today's activities,
+  transplant dates, approaching harvest windows, low stock and equipment service
+- A practical seven-day work plan is created from the existing Work Calendar records
+- Automatic inventory reorder suggestions and equipment service warnings
+- Live irrigation overview for recorded operating hours, fuel use and average pressure
+- Field-by-field performance analytics for revenue, costs and estimated profit
+- Print-friendly farm report that can be saved as PDF from the browser
+- Downloadable field-performance CSV
+- Faster Android navigation with a fixed Home, Planner, Calendar and More bar
+- Clear online/offline connection indicator
+- Activity-list duplicate buttons from V7.3 have been corrected
 
-All existing V7.2 modules, records, roles, permissions and activity history are preserved.
+All V7.3 modules remain available, including secure sign-in, role permissions,
+Users & Access, nursery, fields, crop cycles, activities, irrigation, sprays,
+inventory, harvests, equipment, financials and the audit log.
 
-## Android and GitHub upgrade steps
+## Upgrade
 
-1. Confirm that `database-v7-2-users.sql` has already been run in Supabase.
-2. Extract this ZIP. All extracted files should appear together in one folder.
-3. Open the GitHub repository and select **Add file → Upload files**.
-4. Select every extracted file and upload them at the repository's top level.
-5. Commit the upload to the `main` branch.
-6. Deploy the included `admin-users` Edge Function by following
-   `SUPABASE-FUNCTION-SETUP.md`.
-7. Wait for Netlify to complete the new deployment.
-8. Sign in with the Owner / Admin account and open **Users & Access**.
-9. Tap **Add user** to create the first managed user.
+1. Extract `farm-manager-v8-smart-farm-android-flat.zip`.
+2. Upload every extracted file to the top level of the existing GitHub repository.
+3. Replace files with the same names and commit to the `main` branch.
+4. Wait for Netlify to finish deploying.
+5. Sign in normally. Existing records and users will load automatically.
 
-No new SQL script is required for V7.3.
+Do not upload the ZIP itself. Upload the extracted files.
 
-Do not upload the ZIP itself. Upload the files extracted from it.
+## Supabase
 
-`admin-users-function.ts` can remain at the GitHub repository's top level. Netlify ignores it;
-you will copy its contents into the Supabase Edge Function editor.
+V8 requires no new SQL and no new Edge Function. It continues using the working
+`super-handler` function from V7.3. Do not recreate or rename that function.
 
-## User access
+## Reports
 
-New users created by the Administrator are active immediately and do not consume a
-confirmation-email request. Give the temporary password to the user privately. The user can
-select **Forgot password?** on the sign-in page to choose a replacement password.
+Open **Analytics & Reports**:
 
-Deleting an account removes that person's login and profile. Existing farm production records
-remain in the system.
+- Tap **Print / Save PDF**, then choose the phone's Save as PDF option.
+- Tap **Download field CSV** for a spreadsheet-ready field profitability report.
 
-Keep all earlier database upgrade files; they are included for reference.
+Smart Planner recommendations depend on dates, stock reorder levels and service details
+entered in the existing modules. More complete records produce a more useful plan.
