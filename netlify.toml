@@ -1,6 +1,6 @@
 [build]
-  command = "npm run build"
-  publish = "dist"
+  command = "echo 'Farm Manager V8 is already built'"
+  publish = "."
 
 [[redirects]]
   from = "/*"
