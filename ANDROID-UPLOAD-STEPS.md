@@ -1,20 +1,20 @@
-# Farm Manager V8.2.1 Android Upgrade
+# Farm Manager V8.3 Android Upgrade
 
-## First: activate attendance in Supabase
+## Database: no new SQL for this upgrade
 
-1. Extract `farm-manager-v8-2-1-password-recovery-vercel-flat.zip`.
-2. Open `database-v8-2-attendance.sql` and copy all its text.
-3. In Supabase, open **SQL Editor** and tap **New query**.
-4. Paste the text, tap **Run**, and wait for **Success**.
+Your attendance calendar is already working, so do not run another SQL script for V8.3.
+The included `database-v8-2-attendance.sql` is only for a new installation where
+attendance has never been activated.
 
-## Then: upload the app to GitHub
+## Upload the app to GitHub
 
-1. In the existing Farm Manager GitHub repository, tap **Add file** then **Upload files**.
-2. Select all extracted files and upload them at the repository's top level.
-3. Replace matching files when GitHub asks.
-4. Enter `Upgrade Farm Manager to V8.2.1 password recovery`.
-5. Commit directly to `main`.
-6. Wait for Vercel to deploy automatically, then refresh the website.
+1. Extract `farm-manager-v8-3-workforce-recovery-vercel-flat.zip`.
+2. In the existing Farm Manager GitHub repository, tap **Add file** then **Upload files**.
+3. Select all eight extracted files and upload them at the repository's top level.
+4. Replace matching files when GitHub asks.
+5. Enter `Upgrade Farm Manager to V8.3 workforce summary`.
+6. Commit directly to `main`.
+7. Wait for Vercel to deploy automatically, then refresh the website.
 
 Workers created under **Workers** are attendance records only. They cannot sign in.
 Only accounts listed under **Users & Access** can log in to Farm Manager.
@@ -27,4 +27,6 @@ Only accounts listed under **Users & Access** can log in to Farm Manager.
 4. Save, then open Farm Manager and tap **Forgot admin password?** to test it.
 
 The recovery email opens a secure page where the administrator enters and confirms a
-new password. Attendance, users and all farm records remain unchanged.
+new password. V8.3 also adds a monthly summary for every employee, including present,
+absent and unmarked days, attendance rate, estimated pay and CSV download. Attendance,
+users and all farm records remain unchanged.
