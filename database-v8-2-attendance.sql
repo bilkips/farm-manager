@@ -1,4 +1,4 @@
--- FARM MANAGER V8.2: BASIC EMPLOYEE ATTENDANCE
+-- FARM MANAGER V8.2+: EMPLOYEE ATTENDANCE AND MONTHLY WORKFORCE SUMMARIES
 -- Run this entire script once in Supabase SQL Editor.
 -- Workers remain ordinary employee records; this does not create login accounts.
 
