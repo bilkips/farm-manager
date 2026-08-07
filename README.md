@@ -1,47 +1,69 @@
-# Farm Manager V8 — Smart Farm
+# Farm Manager V8.5 — Farm Command Dashboard & Approved-work Labour
 
-This Android-friendly package upgrades the working V7.3 system to V8 without changing
-the existing database structure, user accounts, permissions or farm records.
+V8.5 is built on the stable V8.4 release. It preserves multi-field operations,
+one-time inventory deductions, attendance, workforce approvals, payroll, password
+recovery, the scrollable mobile sidebar and every earlier farm module.
 
-## What is new
+## Farm command dashboard
 
-- Smart Planner automatically prioritizes overdue field work, today's activities,
-  transplant dates, approaching harvest windows, low stock and equipment service
-- A practical seven-day work plan is created from the existing Work Calendar records
-- Automatic inventory reorder suggestions and equipment service warnings
-- Live irrigation overview for recorded operating hours, fuel use and average pressure
-- Field-by-field performance analytics for revenue, costs and estimated profit
-- Print-friendly farm report that can be saved as PDF from the browser
-- Downloadable field-performance CSV
-- Faster Android navigation with a fixed Home, Planner, Calendar and More bar
-- Clear online/offline connection indicator
-- Activity-list duplicate buttons from V7.3 have been corrected
+- A clearer operational view of active fields, acres, today's work and overdue tasks
+- Workforce attendance, planned jobs and pending approvals at a glance
+- Nursery, inventory and equipment pulse checks
+- Owner/Manager financial position with revenue, costs, result and payroll balance
+- Fast actions for field activities, job assignments, irrigation and harvests
+- Mobile-first priority inbox and field/crop overview
 
-All V7.3 modules remain available, including secure sign-in, role permissions,
-Users & Access, nursery, fields, crop cycles, activities, irrigation, sprays,
-inventory, harvests, equipment, financials and the audit log.
+## Workforce
 
-## Upgrade
+- Complete employee profiles, employment type, hire date and payment details
+- Daily, hourly, monthly and piece-rate wage profiles
+- Reusable work crews with a named supervisor
+- One job assigned to individuals or a crew
+- One assignment linked to one or many fields and their active crop cycles
+- Individual regular hours, overtime hours and completed units
+- Completed-work approval or rejection by Owner, Manager or Field Supervisor
+- Employee productivity summaries and CSV-ready field labour reports
 
-1. Extract `farm-manager-v8-smart-farm-android-flat.zip`.
-2. Upload every extracted file to the top level of the existing GitHub repository.
-3. Replace files with the same names and commit to the `main` branch.
-4. Wait for Netlify to finish deploying.
-5. Sign in normally. Existing records and users will load automatically.
+## Approved-work payroll
 
-Do not upload the ZIP itself. Upload the extracted files.
+- Daily employees: approved hours × (daily wage ÷ normal daily hours)
+- Monthly employees: approved hours × (monthly salary ÷ 26 standard days ÷ normal daily hours)
+- Hourly employees: approved hours × hourly wage
+- Piece-rate employees: approved completed units × piece rate
+- Overtime: approved overtime hours × hourly equivalent × assignment multiplier
+- Bonuses, salary advances and deductions
+- Draft, approved and closed payroll periods
+- Partial and full payments with automatic outstanding balances
+- Payment history, printable payslips and monthly payroll CSV
 
-## Supabase
+Attendance remains an audit cross-check. Once completed work is approved, its recorded
+hours or units remain payable even when the attendance register needs correction.
 
-V8 requires no new SQL and no new Edge Function. It continues using the working
-`super-handler` function from V7.3. Do not recreate or rename that function.
+## Field and crop costing
 
-## Reports
+Approved assignment earnings are automatically distributed across linked fields using
+acreage share. If the same field and date already contain a manual activity labour
+estimate, that estimate is replaced by the approved employee earnings. It is not added
+again. Input costs remain posted.
 
-Open **Analytics & Reports**:
+Payroll payments settle the employee balance and are shown as cash settlements. They
+do not create a second operating expense. The Financial Dashboard includes an employee-
+by-assignment labour ledger showing hours, overtime and the exact amount accrued.
 
-- Tap **Print / Save PDF**, then choose the phone's Save as PDF option.
-- Tap **Download field CSV** for a spreadsheet-ready field profitability report.
+## Permissions and audit
 
-Smart Planner recommendations depend on dates, stock reorder levels and service details
-entered in the existing modules. More complete records produce a more useful plan.
+- Owner/Admin and Farm Manager: full workforce and payroll access
+- Field Supervisor: employees, crews, assignments, results and work approval
+- Payroll amounts and payments remain hidden from non-financial roles
+- Every workforce and payroll change uses the existing Farm Manager audit trail
+- Employees remain records only; they do not receive login accounts
+
+## One-time upgrade
+
+If V8.4 Workforce & Payroll is already working, no new SQL is required. Upload the
+extracted deployment files to the GitHub repository root. Vercel detects the Vite
+project, runs `npm run build` and publishes the generated `dist` app. The entry files
+remain at repository root, so no `/src/main.jsx` move is required.
+
+For a new installation that has not run the workforce upgrade, run
+`database-v8-4-workforce-payroll.sql` once in Supabase SQL Editor first.

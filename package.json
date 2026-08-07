@@ -1,7 +1,7 @@
 {
-  "name": "farm-manager-v8-smart-farm-android-flat",
+  "name": "farm-manager-v8-5-farm-command-labour",
   "private": true,
-  "version": "8.0.0",
+  "version": "8.5.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
