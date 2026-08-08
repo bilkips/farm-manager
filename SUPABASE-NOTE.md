@@ -1,6 +1,9 @@
-# Supabase note for V8.5
+# Supabase note for V8.6
 
 No new SQL is required when V8.4 Workforce & Payroll is already active.
+
+V8.6 uses the existing profile, farm, attendance, field, nursery and payroll tables.
+The consistency fixes are implemented in the application and preserve all records.
 
 Run `database-v8-4-workforce-payroll.sql` once in Supabase SQL Editor before using
 Workforce & Jobs or Payroll only if it was not run for V8.4.

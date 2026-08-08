@@ -1,8 +1,23 @@
-# Farm Manager V8.5 — Farm Command Dashboard & Approved-work Labour
+# Farm Manager V8.6 — Records Consistency & Operational Status
 
-V8.5 is built on the stable V8.4 release. It preserves multi-field operations,
+V8.6 is built on the stable V8.5 release. It preserves multi-field operations,
 one-time inventory deductions, attendance, workforce approvals, payroll, password
 recovery, the scrollable mobile sidebar and every earlier farm module.
+
+## V8.6 changes
+
+- A dedicated Profile page for the Owner / Administrator name, farm name, account
+  details and secure password-reset email
+- Attendance and Payroll share one selected month and one attendance calculation, so
+  present and absent days remain identical in both modules
+- Draft payroll shows new bonuses, salary advances and deductions immediately;
+  approval automatically saves the latest values before freezing the period
+- Payroll continues showing live attendance corrections after approval because
+  attendance is an audit cross-check, not the source of approved-work earnings
+- Nursery defaults to seedlings still at the nursery and keeps transplanted batches
+  in a separate history view; nursery totals exclude transplanted seedlings
+- Fields are separated into Active, Growing and Fallow views with count and acreage
+  summaries; transplanting or starting a crop automatically marks a field Growing
 
 ## Farm command dashboard
 
@@ -58,7 +73,7 @@ by-assignment labour ledger showing hours, overtime and the exact amount accrued
 - Every workforce and payroll change uses the existing Farm Manager audit trail
 - Employees remain records only; they do not receive login accounts
 
-## One-time upgrade
+## Upgrade
 
 If V8.4 Workforce & Payroll is already working, no new SQL is required. Upload the
 extracted deployment files to the GitHub repository root. Vercel detects the Vite

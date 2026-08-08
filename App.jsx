@@ -10,7 +10,7 @@ import {
   ShieldCheck, LogOut, UserPlus, History, Trash2, BarChart3, BrainCircuit,
   CalendarCheck2, ChevronLeft, ChevronRight, Clock3, Download, FileText,
   LandPlot, ListChecks, MoreHorizontal, TrendingUp, UserCheck, UserX,
-  WalletCards, Wifi, WifiOff
+  UserRound, WalletCards, Wifi, WifiOff
 } from "lucide-react";
 const SUPABASE_URL = "https://itlngocavjyrjgeblsmq.supabase.co";
 const SUPABASE_KEY = "sb_publishable_sV6zuknGzOavoAdqW2o1MQ_6GzpVKxE";
@@ -47,6 +47,7 @@ const NAV = [
   ["equipment", "Equipment", Wrench],
   ["expenses", "Financials", CircleDollarSign],
   ["reports", "Field Timeline", ClipboardList],
+  ["profile", "Profile", UserRound],
   ["users", "Users & Access", ShieldCheck]
 ];
 
@@ -57,7 +58,7 @@ const ROLE_LABELS = {
 const WRITE_ROLES = new Set(["owner", "manager", "storekeeper", "supervisor"]);
 
 const emptyBlock = { name: "", area: "" };
-const emptyField = { name: "", area: "", blockId: "", status: "available" };
+const emptyField = { name: "", area: "", blockId: "", status: "active" };
 const emptyBatch = {
   crop_name: "", variety: "", sowing_date: new Date().toISOString().slice(0,10),
   trays: "", cells_per_tray: "128", seeds_sown: "", germinated: "",
@@ -211,6 +212,8 @@ export default function App() {
   const [timelineField, setTimelineField] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const [inventoryFilter, setInventoryFilter] = useState("all");
+  const [fieldFilter, setFieldFilter] = useState("all");
+  const [nurseryView, setNurseryView] = useState("active");
   const [status, setStatus] = useState({ type: "loading", message: "Connecting to Supabase…" });
   const [modal, setModal] = useState(null);
   const [editingId, setEditingId] = useState(null);
@@ -223,6 +226,8 @@ export default function App() {
     full_name: "", email: "", password: "", role: "viewer"
   });
   const [userSaving, setUserSaving] = useState(false);
+  const [profileForm, setProfileForm] = useState({ full_name: "", farm_name: "" });
+  const [profileSaving, setProfileSaving] = useState(false);
   const [isOnline, setIsOnline] = useState(() => navigator.onLine);
 
   useEffect(() => {
@@ -277,6 +282,10 @@ export default function App() {
         supabase.from("activity_log").select("*").order("created_at", { ascending: false }).limit(150)
       ]);
       setProfile(myProfile || null);
+      setProfileForm({
+        full_name: myProfile?.full_name || session.user.user_metadata?.full_name || "",
+        farm_name: activeFarm.name || "My Farm"
+      });
       setFarmUsers(userRows || []);
       setAuditLogs(logRows || []);
 
@@ -388,7 +397,7 @@ export default function App() {
         type: setupMessages.length ? "error" : "success",
         message: setupMessages.length
           ? `Farm data loaded; ${setupMessages.join("; ")}.`
-          : "Connected securely. Live V8.5 farm, workforce, payroll and finance records loaded."
+          : "Connected securely. Live V8.6 farm, workforce, payroll and finance records loaded."
       });
     } catch (error) {
       setStatus({ type: "error", message: friendlyError(error) });
@@ -433,25 +442,20 @@ export default function App() {
       String(worker.status || "active").toLowerCase() !== "inactive" || recordedIds.has(worker.id)
     );
   }, [workers, selectedAttendanceRows]);
-  const attendanceMonthRows = useMemo(
-    () => attendance.filter(row => String(row.attendance_date || "").startsWith(attendanceMonth)),
-    [attendance, attendanceMonth]
+  const attendanceMonthData = useMemo(
+    () => buildAttendanceMonthSummary({ month: attendanceMonth, workers, attendance }),
+    [attendanceMonth, workers, attendance]
   );
+  const attendanceMonthRows = attendanceMonthData.rows;
   const attendanceCalendarDays = useMemo(
     () => buildAttendanceCalendar(attendanceMonth),
     [attendanceMonth]
   );
-  const attendanceMonthDates = useMemo(
-    () => [...new Set(attendanceMonthRows.map(row => row.attendance_date).filter(Boolean))].sort(),
-    [attendanceMonthRows]
-  );
+  const attendanceMonthDates = attendanceMonthData.dates;
   const attendanceWorkerSummaries = useMemo(() => workers
     .map(worker => {
-      const rows = attendanceMonthRows.filter(row => row.worker_id === worker.id);
-      const present = rows.filter(row => row.status === "present").length;
-      const absent = rows.filter(row => row.status === "absent").length;
-      const marked = present + absent;
-      const unmarked = Math.max(0, attendanceMonthDates.length - marked);
+      const totals = attendanceMonthData.byWorker.get(worker.id) || emptyAttendanceTotals(attendanceMonthDates.length);
+      const { present, absent, marked, unmarked } = totals;
       const dailyRate = Number(worker.daily_rate || 0);
       const estimatedPay = attendanceBasePay(worker, present, attendanceMonthDates.length);
       return {
@@ -462,7 +466,7 @@ export default function App() {
       };
     })
     .filter(summary => summary.marked > 0 || String(summary.worker.status || "active").toLowerCase() !== "inactive"),
-  [workers, attendanceMonthRows, attendanceMonthDates]);
+  [workers, attendanceMonthData, attendanceMonthDates]);
   const attendanceMonthLabourCost = useMemo(
     () => attendanceWorkerSummaries.reduce((sum, summary) => sum + summary.estimatedPay, 0),
     [attendanceWorkerSummaries]
@@ -551,6 +555,10 @@ export default function App() {
     assignmentWorkers,
     adjustments: payrollAdjustments
   }), [payrollMonth, workers, attendance, workAssignments, assignmentWorkers, payrollAdjustments]);
+  const payrollAttendanceData = useMemo(
+    () => buildAttendanceMonthSummary({ month: payrollMonth, workers, attendance }),
+    [payrollMonth, workers, attendance]
+  );
   const currentPayrollItems = useMemo(
     () => currentPayrollPeriod ? payrollItems.filter(item => item.payroll_period_id === currentPayrollPeriod.id) : [],
     [payrollItems, currentPayrollPeriod]
@@ -559,7 +567,8 @@ export default function App() {
     const activePayments = payrollPayments.filter(payment =>
       payment.period_month === payrollPeriodMonth && payment.status === "approved"
     );
-    const sourceRows = currentPayrollItems.length
+    const useFrozenAmounts = currentPayrollItems.length && ["approved", "closed"].includes(currentPayrollPeriod?.status);
+    const sourceRows = useFrozenAmounts
       ? currentPayrollItems.map(item => ({
           worker: workers.find(worker => worker.id === item.worker_id) || { id: item.worker_id, full_name: "Former employee", role: "Worker" },
           recordedWorkDays: Number(item.recorded_work_days || 0),
@@ -580,8 +589,12 @@ export default function App() {
       const workerPayments = activePayments.filter(payment => payment.worker_id === row.worker.id);
       const paid = workerPayments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
       const work = approvedLabourMonthByWorker.get(row.worker.id);
+      const attendanceTotals = payrollAttendanceData.byWorker.get(row.worker.id) || emptyAttendanceTotals(payrollAttendanceData.dates.length);
       return {
         ...row,
+        recordedWorkDays: payrollAttendanceData.dates.length,
+        presentDays: attendanceTotals.present,
+        absentDays: attendanceTotals.absent,
         assignmentCount: work?.assignmentIds.size || 0,
         regularHours: roundNumber(work?.regularHours || 0, 2),
         overtimeHours: roundNumber(work?.overtimeHours || 0, 2),
@@ -590,13 +603,16 @@ export default function App() {
         balance: Math.max(0, roundNumber(row.netPay - paid, 2))
       };
     });
-  }, [currentPayrollItems, payrollPreviewRows, payrollPayments, payrollPeriodMonth, workers, approvedLabourMonthByWorker]);
+  }, [currentPayrollItems, currentPayrollPeriod, payrollPreviewRows, payrollPayments, payrollPeriodMonth, workers, approvedLabourMonthByWorker, payrollAttendanceData]);
   const payrollSummary = useMemo(() => payrollRows.reduce((summary, row) => ({
     gross: summary.gross + row.grossPay,
     net: summary.net + row.netPay,
     paid: summary.paid + row.paid,
-    balance: summary.balance + row.balance
-  }), { gross: 0, net: 0, paid: 0, balance: 0 }), [payrollRows]);
+    balance: summary.balance + row.balance,
+    bonuses: summary.bonuses + row.bonuses,
+    advances: summary.advances + row.advances,
+    deductions: summary.deductions + row.deductions
+  }), { gross: 0, net: 0, paid: 0, balance: 0, bonuses: 0, advances: 0, deductions: 0 }), [payrollRows]);
   const workforceMetrics = useMemo(() => ({
     activeCrews: crews.filter(crew => crew.status === "active").length,
     planned: workAssignments.filter(assignment => ["planned", "in_progress"].includes(assignment.status)).length,
@@ -611,12 +627,33 @@ export default function App() {
     assignmentFields,
     attendance
   }), [payrollMonth, workers, workAssignments, assignmentWorkers, assignmentFields, attendance]);
+  const activeNurseryBatches = useMemo(
+    () => batches.filter(batch => isActiveNurseryBatch(batch)),
+    [batches]
+  );
+  const transplantedNurseryBatches = useMemo(
+    () => batches.filter(batch => !isActiveNurseryBatch(batch)),
+    [batches]
+  );
+  const fieldStatusSummary = useMemo(() => {
+    const summary = {
+      active: { count: 0, area: 0 },
+      growing: { count: 0, area: 0 },
+      fallow: { count: 0, area: 0 }
+    };
+    fields.forEach(field => {
+      const statusKey = canonicalFieldStatus(field.status);
+      summary[statusKey].count += 1;
+      summary[statusKey].area += Number(field.area_acres || 0);
+    });
+    return summary;
+  }, [fields]);
 
   const metrics = useMemo(() => {
     const totalArea = fields.reduce((sum, f) => sum + Number(f.area_acres || 0), 0);
-    const activeFields = fields.filter(f => ["growing","active","planted"].includes(String(f.status || "").toLowerCase())).length;
-    const seedlings = batches.reduce((sum, b) => sum + Math.max(0, Number(b.germinated || 0) - Number(b.losses || 0)), 0);
-    const ready = batches.filter(b => String(b.status).toLowerCase() === "ready").length;
+    const activeFields = fields.filter(field => canonicalFieldStatus(field.status) !== "fallow").length;
+    const seedlings = activeNurseryBatches.reduce((sum, batch) => sum + nurseryLiveSeedlings(batch), 0);
+    const ready = activeNurseryBatches.filter(batch => String(batch.status).toLowerCase() === "ready").length;
     const dueToday = activityOperations.filter(a => a.scheduled_date === today && !["completed","cancelled"].includes(a.status)).length;
     const overdue = activityOperations.filter(a => a.scheduled_date && a.scheduled_date < today && !["completed","cancelled"].includes(a.status)).length;
     const lowStock = inventory.filter(i => Number(i.quantity_on_hand || 0) <= Number(i.reorder_level || 0)).length;
@@ -642,7 +679,7 @@ export default function App() {
       revenue, fieldCosts, profit: revenue-fieldCosts, completedTasks, taskCompletion,
       upcoming7, inventoryValue, totalFuel, irrigationHours, averagePressure, harvestedQuantity
     };
-  }, [fields, batches, activityCostLedger, activityOperations, inventory, harvests, irrigation, sprays, workforceAllocation, today, weekEnd]);
+  }, [fields, activeNurseryBatches, activityCostLedger, activityOperations, inventory, harvests, irrigation, sprays, workforceAllocation, today, weekEnd]);
 
   const blockName = id => blocks.find(b => b.id === id)?.name || "Unknown block";
   const fieldName = id => fields.find(f => f.id === id)?.name || "Unknown field";
@@ -679,6 +716,56 @@ export default function App() {
     if (wageType === "piece") return `${money(worker.piece_rate)} / ${worker.piece_unit || "unit"}`;
     return `${money(worker.daily_rate)} / day`;
   };
+  function syncReportingMonth(month, selectedDate = null) {
+    if (!/^\d{4}-\d{2}$/.test(String(month || ""))) return;
+    setAttendanceMonth(month);
+    setPayrollMonth(month);
+    setAttendanceDate(current => selectedDate || (String(current).startsWith(month) ? current : `${month}-01`));
+  }
+  async function saveProfile(event) {
+    event.preventDefault();
+    if (!canManageUsers || profileSaving || !farm) return;
+    const fullName = profileForm.full_name.trim();
+    const farmName = profileForm.farm_name.trim();
+    if (!fullName || !farmName) {
+      setStatus({ type: "error", message: "Enter both the Administrator name and farm name." });
+      return;
+    }
+    setProfileSaving(true);
+    setStatus({ type: "loading", message: "Updating your Administrator profile…" });
+    try {
+      const { error: authError } = await supabase.auth.updateUser({ data: { full_name: fullName } });
+      if (authError) throw authError;
+      const { error: profileError } = await supabase.from("farm_profiles").update({
+        full_name: fullName,
+        updated_at: new Date().toISOString()
+      }).eq("id", session.user.id);
+      if (profileError) throw profileError;
+      const { error: farmError } = await supabase.from("farms").update({ name: farmName }).eq("id", farm.id);
+      if (farmError) throw farmError;
+      await loadData();
+      setStatus({ type: "success", message: "Administrator and farm details updated." });
+    } catch (error) {
+      setStatus({ type: "error", message: friendlyError(error) });
+    } finally {
+      setProfileSaving(false);
+    }
+  }
+  async function sendProfilePasswordReset() {
+    const email = profile?.email || session.user.email;
+    if (!email || profileSaving) return;
+    setProfileSaving(true);
+    try {
+      const redirectTo = `${window.location.origin}${window.location.pathname}?recovery=1`;
+      const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
+      if (error) throw error;
+      setStatus({ type: "success", message: `Password reset instructions sent to ${email}.` });
+    } catch (error) {
+      setStatus({ type: "error", message: friendlyError(error) });
+    } finally {
+      setProfileSaving(false);
+    }
+  }
   function matchesSearch(...values) {
     const query = searchTerm.trim().toLowerCase();
     return !query || values.some(value => String(value ?? "").toLowerCase().includes(query));
@@ -831,7 +918,7 @@ export default function App() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `farm-manager-v8-5-field-report-${today}.csv`;
+    link.download = `farm-manager-v8-6-field-report-${today}.csv`;
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -860,7 +947,7 @@ export default function App() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `farm-manager-v8-5-attendance-${attendanceMonth}.csv`;
+    link.download = `farm-manager-v8-6-attendance-${attendanceMonth}.csv`;
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -878,7 +965,7 @@ export default function App() {
     if (type === "cycle") setForm({
       ...emptyCycle,
       field_id: fields[0]?.id || "",
-      source_batch_id: batches.find(b => b.status === "ready")?.id || "",
+      source_batch_id: activeNurseryBatches.find(b => b.status === "ready")?.id || "",
       area_acres: fields[0]?.area_acres || ""
     });
     if (type === "activity") setForm({
@@ -930,7 +1017,7 @@ export default function App() {
     if (type === "block") setForm({ name: item.name || "", area: item.area_acres || "" });
     if (type === "field") setForm({
       name: item.name || "", area: item.area_acres || "",
-      blockId: item.farm_block_id || "", status: item.status || "available"
+      blockId: item.farm_block_id || "", status: canonicalFieldStatus(item.status)
     });
     if (type === "batch") setForm({
       crop_name: item.crop_name || "", variety: item.variety || "",
@@ -1321,6 +1408,38 @@ export default function App() {
     }
   }
 
+  async function persistPayrollItems(periodId) {
+    const itemPayloads = payrollPreviewRows.map(row => ({
+      farm_id: farm.id,
+      payroll_period_id: periodId,
+      worker_id: row.worker.id,
+      recorded_work_days: row.recordedWorkDays,
+      present_days: row.presentDays,
+      absent_days: row.absentDays,
+      regular_pay: roundNumber(row.regularPay, 2),
+      overtime_pay: roundNumber(row.overtimePay, 2),
+      bonus_total: roundNumber(row.bonuses, 2),
+      advance_total: roundNumber(row.advances, 2),
+      deduction_total: roundNumber(row.deductions, 2),
+      gross_pay: roundNumber(row.grossPay, 2),
+      net_pay: roundNumber(row.netPay, 2),
+      calculation_notes: row.calculationNotes
+    }));
+    if (!itemPayloads.length) throw new Error("There are no employee earnings or adjustments to save for this payroll month.");
+    const { error: itemsError } = await supabase.from("payroll_items")
+      .upsert(itemPayloads, { onConflict: "payroll_period_id,worker_id" });
+    if (itemsError) throw itemsError;
+    const previewWorkerIds = new Set(itemPayloads.map(item => item.worker_id));
+    const staleItemIds = payrollItems
+      .filter(item => item.payroll_period_id === periodId && !previewWorkerIds.has(item.worker_id))
+      .map(item => item.id);
+    if (staleItemIds.length) {
+      const { error: staleError } = await supabase.from("payroll_items").delete().in("id", staleItemIds);
+      if (staleError) throw staleError;
+    }
+    return itemPayloads;
+  }
+
   async function generatePayroll() {
     if (!canSeeFinancials || !payrollReady || saving) return;
     if (currentPayrollPeriod && currentPayrollPeriod.status !== "draft") {
@@ -1339,25 +1458,7 @@ export default function App() {
         status: "draft"
       }, { onConflict: "farm_id,period_month" }).select().single();
       if (periodError) throw periodError;
-      const itemPayloads = payrollPreviewRows.map(row => ({
-        farm_id: farm.id,
-        payroll_period_id: period.id,
-        worker_id: row.worker.id,
-        recorded_work_days: row.recordedWorkDays,
-        present_days: row.presentDays,
-        absent_days: row.absentDays,
-        regular_pay: roundNumber(row.regularPay, 2),
-        overtime_pay: roundNumber(row.overtimePay, 2),
-        bonus_total: roundNumber(row.bonuses, 2),
-        advance_total: roundNumber(row.advances, 2),
-        deduction_total: roundNumber(row.deductions, 2),
-        gross_pay: roundNumber(row.grossPay, 2),
-        net_pay: roundNumber(row.netPay, 2),
-        calculation_notes: row.calculationNotes
-      }));
-      const { error: itemsError } = await supabase.from("payroll_items")
-        .upsert(itemPayloads, { onConflict: "payroll_period_id,worker_id" });
-      if (itemsError) throw itemsError;
+      const itemPayloads = await persistPayrollItems(period.id);
       await loadData();
       setStatus({ type: "success", message: `${formatAttendanceMonth(payrollMonth)} payroll generated as a draft for ${itemPayloads.length} employees.` });
     } catch (error) {
@@ -1383,6 +1484,7 @@ export default function App() {
     }
     setSaving(true);
     try {
+      if (nextStatus === "approved") await persistPayrollItems(currentPayrollPeriod.id);
       const payload = { status: nextStatus };
       if (nextStatus === "approved") {
         payload.approved_by = session.user.id;
@@ -1407,6 +1509,13 @@ export default function App() {
 
   async function voidPayrollRecord(table, record, label) {
     if (!canSeeFinancials || saving) return;
+    if (table === "payroll_adjustments") {
+      const period = payrollPeriods.find(item => item.period_month === record.period_month);
+      if (period && period.status !== "draft") {
+        setStatus({ type: "error", message: `Reopen the ${formatAttendanceMonth(String(record.period_month).slice(0, 7))} payroll before changing its adjustments.` });
+        return;
+      }
+    }
     if (!window.confirm(`Void ${label}? The audit trail will retain this change.`)) return;
     setSaving(true);
     try {
@@ -1443,7 +1552,7 @@ export default function App() {
         row.balance.toFixed(2)
       ])
     ];
-    downloadCSV(rows, `farm-manager-v8-5-payroll-${payrollMonth}.csv`);
+    downloadCSV(rows, `farm-manager-v8-6-payroll-${payrollMonth}.csv`);
   }
 
   function downloadFieldLabourSummary() {
@@ -1451,7 +1560,7 @@ export default function App() {
       ["Field", "Crop cycle", "Approved jobs", "Employees", "Regular hours", "Overtime hours", "Completed units", "Allocated labour KES"],
       ...workforceAllocation.rows.map(row => [row.fieldName, row.cropName, row.assignmentCount, row.workerCount, row.regularHours.toFixed(2), row.overtimeHours.toFixed(2), row.completedUnits.toFixed(2), row.cost.toFixed(2)])
     ];
-    downloadCSV(rows, `farm-manager-v8-5-field-labour-${today}.csv`);
+    downloadCSV(rows, `farm-manager-v8-6-field-labour-${today}.csv`);
   }
 
   async function markWorkerAttendance(workerId, nextStatus) {
@@ -1559,7 +1668,7 @@ export default function App() {
       if (modal === "field") {
         const payload = {
           farm_block_id: form.blockId, name: form.name.trim(),
-          area_acres: Number(form.area), status: form.status
+          area_acres: Number(form.area), status: canonicalFieldStatus(form.status)
         };
         const { error } = editingId
           ? await supabase.from("fields").update(payload).eq("id", editingId)
@@ -1606,6 +1715,13 @@ export default function App() {
           ? await supabase.from("crop_cycles").update(payload).eq("id", editingId)
           : await supabase.from("crop_cycles").insert(payload);
         if (error) throw error;
+        const nextFieldStatus = fieldStatusForCycle(form.status);
+        if (nextFieldStatus && ["owner", "manager"].includes(role)) {
+          const { error: fieldStatusError } = await supabase.from("fields")
+            .update({ status: nextFieldStatus })
+            .eq("id", form.field_id);
+          if (fieldStatusError) throw fieldStatusError;
+        }
         if (!editingId && form.source_batch_id) {
           const { error: batchUpdateError } = await supabase
             .from("propagation_batches")
@@ -1797,6 +1913,10 @@ export default function App() {
       }
       if (modal === "adjustment") {
         const periodMonth = `${form.period_month || payrollMonth}-01`;
+        const targetPeriod = payrollPeriods.find(period => period.period_month === periodMonth);
+        if (targetPeriod && targetPeriod.status !== "draft") {
+          throw new Error(`Reopen the ${formatAttendanceMonth(periodMonth.slice(0, 7))} payroll before changing bonuses, advances or deductions.`);
+        }
         const { error } = await supabase.from("payroll_adjustments").insert({
           farm_id: farm.id,
           worker_id: form.worker_id,
@@ -1962,6 +2082,7 @@ export default function App() {
       source_batch_id: batch.id,
       crop_name: batch.crop_name || "",
       variety: batch.variety || "",
+      status: "planted",
       area_acres: fields.find(f => f.id === availableField)?.area_acres || ""
     });
     setModal("cycle");
@@ -2054,7 +2175,7 @@ export default function App() {
       <aside className={`sidebar ${mobileNav ? "open" : ""}`}>
         <div className="brand">
           <div className="brand-mark"><Sprout size={25}/></div>
-          <div><strong>Farm Manager</strong><span>V8.5 · Farm Command & Labour</span></div>
+          <div><strong>Farm Manager</strong><span>V8.6 · Records Consistency</span></div>
           <button className="mobile-close" onClick={() => setMobileNav(false)}><X/></button>
         </div>
         <nav>{visibleNav.map(([id,label,Icon]) => (
@@ -2065,6 +2186,7 @@ export default function App() {
         <div className="signed-in">
           <span>{profile?.full_name || session.user.email}</span>
           <small>{ROLE_LABELS[role] || role}</small>
+          <button className="signed-in-profile" onClick={() => {setPage("profile");setMobileNav(false)}}><UserRound size={16}/> Profile</button>
           <button onClick={() => supabase.auth.signOut()}><LogOut size={16}/> Sign out</button>
         </div>
       </aside>
@@ -2089,7 +2211,7 @@ export default function App() {
         {page === "dashboard" && <>
           <section className="dashboard-hero">
             <div className="dashboard-hero-copy">
-              <span className="eyebrow">V8.5 FARM COMMAND CENTRE</span>
+              <span className="eyebrow">V8.6 FARM COMMAND CENTRE</span>
               <h2>{greeting}, {signedInName}.</h2>
               <p>Your fields, people, priorities and money—focused on what needs a decision today.</p>
               <div className="dashboard-hero-signals">
@@ -2163,7 +2285,7 @@ export default function App() {
 
         {page === "planner" && <>
           <section className="hero smart-hero">
-            <div><span className="eyebrow">V8.5 SMART FARM PLANNER</span><h2>The next seven days, organized</h2><p>Priorities are generated automatically from activities, workforce assignments, transplant dates, harvest windows, stock levels and equipment service records.</p></div>
+            <div><span className="eyebrow">V8.6 SMART FARM PLANNER</span><h2>The next seven days, organized</h2><p>Priorities are generated automatically from activities, workforce assignments, transplant dates, harvest windows, stock levels and equipment service records.</p></div>
             <button className="button primary" disabled={!fields.length || !canWriteModule("activities")} onClick={() => open("activity")}><Plus size={17}/> Schedule activity</button>
           </section>
           <section className="stats-grid planner-stats">
@@ -2213,24 +2335,43 @@ export default function App() {
           </Table>
         </SimplePage>}
 
-        {page === "fields" && <SimplePage title="Fields" description="Manage individual production units." button="Add field" disabled={!blocks.length} onAdd={() => open("field")}>
+        {page === "fields" && <SimplePage title="Fields" description="Separate fields that are available for work, currently growing a crop, or resting fallow." button="Add field" disabled={!blocks.length} onAdd={() => open("field")}>
+          <section className="field-status-summary">
+            {Object.entries(fieldStatusSummary).map(([statusKey, summary]) => <button key={statusKey} className={fieldFilter === statusKey ? `active ${statusKey}` : statusKey} onClick={() => setFieldFilter(statusKey)}>
+              <span>{capitalize(statusKey)}</span><strong>{summary.count}</strong><small>{summary.area.toFixed(2)} acres</small>
+            </button>)}
+          </section>
+          <div className="filter-tabs field-filter-tabs">
+            <button className={fieldFilter === "all" ? "active" : ""} onClick={() => setFieldFilter("all")}>All fields ({fields.length})</button>
+            <button className={fieldFilter === "active" ? "active" : ""} onClick={() => setFieldFilter("active")}>Active ({fieldStatusSummary.active.count})</button>
+            <button className={fieldFilter === "growing" ? "active" : ""} onClick={() => setFieldFilter("growing")}>Growing ({fieldStatusSummary.growing.count})</button>
+            <button className={fieldFilter === "fallow" ? "active" : ""} onClick={() => setFieldFilter("fallow")}>Fallow ({fieldStatusSummary.fallow.count})</button>
+          </div>
           <Table headers={["Name","Block","Area","Status"]}>
-            {fields.filter(f=>matchesSearch(f.name,f.status,blockName(f.farm_block_id))).map(f => <div className="table-row" key={f.id}><strong>{f.name}</strong><span>{blockName(f.farm_block_id)}</span>
-              <span>{Number(f.area_acres||0)} acres</span><span className="row-actions"><span className="pill">{f.status||"available"}</span><button className="small-action" onClick={() => edit("field", f)}>Edit</button><button className="small-action danger-action" onClick={() => deleteItem("fields", f.id, `field ${f.name}`)}>Delete</button></span></div>)}
+            {fields.filter(field => (fieldFilter === "all" || canonicalFieldStatus(field.status) === fieldFilter) && matchesSearch(field.name, canonicalFieldStatus(field.status), blockName(field.farm_block_id))).map(field => <div className="table-row" key={field.id}><strong>{field.name}</strong><span>{blockName(field.farm_block_id)}</span>
+              <span>{Number(field.area_acres||0)} acres</span><span className="row-actions"><span className={`pill field-pill ${canonicalFieldStatus(field.status)}`}>{canonicalFieldStatus(field.status)}</span><button className="small-action" onClick={() => edit("field", field)}>Edit</button><button className="small-action danger-action" onClick={() => deleteItem("fields", field.id, `field ${field.name}`)}>Delete</button></span></div>)}
+            {!fields.some(field =>
+              (fieldFilter === "all" || canonicalFieldStatus(field.status) === fieldFilter) &&
+              matchesSearch(field.name, canonicalFieldStatus(field.status), blockName(field.farm_block_id))
+            ) && <Empty text={fields.length ? `No ${fieldFilter === "all" ? "" : `${fieldFilter} `}fields match this view.` : "Add your first field."}/>}
           </Table>
         </SimplePage>}
 
-        {page === "nursery" && <SimplePage title="Nursery & Seed Propagation" description="Track sowing, germination, seedling losses and transplant readiness."
+        {page === "nursery" && <SimplePage title="Nursery & Seed Propagation" description="Keep seedlings still in the nursery separate from batches already transplanted."
           button="New batch" onAdd={() => open("batch")}>
           <section className="nursery-summary">
-            <Mini label="Batches" value={batches.length}/><Mini label="Live seedlings" value={metrics.seedlings}/>
-            <Mini label="Ready" value={metrics.ready}/><Mini label="Average germination" value={averageGermination(batches)}/>
+            <Mini label="Active batches" value={activeNurseryBatches.length}/><Mini label="Seedlings at nursery" value={metrics.seedlings}/>
+            <Mini label="Ready" value={metrics.ready}/><Mini label="Average germination" value={averageGermination(activeNurseryBatches)}/>
           </section>
+          <div className="filter-tabs nursery-tabs">
+            <button className={nurseryView === "active" ? "active" : ""} onClick={() => setNurseryView("active")}>At nursery ({activeNurseryBatches.length})</button>
+            <button className={nurseryView === "transplanted" ? "active" : ""} onClick={() => setNurseryView("transplanted")}>Transplanted ({transplantedNurseryBatches.length})</button>
+          </div>
           <div className="batch-grid">
-            {batches.filter(b=>matchesSearch(b.crop_name,b.variety,b.batch_code,b.status)).map(b => {
-              const live = Math.max(0, Number(b.germinated||0)-Number(b.losses||0));
+            {(nurseryView === "active" ? activeNurseryBatches : transplantedNurseryBatches).filter(b=>matchesSearch(b.crop_name,b.variety,b.batch_code,b.status)).map(b => {
+              const live = nurseryLiveSeedlings(b);
               const rate = Number(b.seeds_sown||0) ? Math.round(Number(b.germinated||0)/Number(b.seeds_sown)*100) : 0;
-              return <article className="batch-card" key={b.id}>
+              return <article className={`batch-card ${isActiveNurseryBatch(b) ? "active-batch" : "transplanted-batch"}`} key={b.id}>
                 <div className="batch-top"><div><span className="eyebrow">{b.sowing_date || "NO DATE"}</span>
                   <h3>{b.crop_name}{b.variety ? " · "+b.variety : ""}</h3></div><span className="pill">{b.status}</span></div>
                 <div className="batch-metrics"><div><b>{b.trays||0}</b><span>Trays</span></div><div><b>{live}</b><span>Live seedlings</span></div>
@@ -2244,7 +2385,9 @@ export default function App() {
                 </div>
               </article>
             })}
-            {!batches.length && <Empty text="Create your first propagation batch."/>}
+            {!(nurseryView === "active" ? activeNurseryBatches : transplantedNurseryBatches).some(
+              batch => matchesSearch(batch.crop_name,batch.variety,batch.batch_code,batch.status)
+            ) && <Empty text={nurseryView === "active" ? "No seedlings are currently active in the nursery." : "No batches have been transplanted yet."}/>}
           </div>
         </SimplePage>}
 
@@ -2324,7 +2467,7 @@ export default function App() {
           </div>}
           <div className="attendance-login-note"><ShieldCheck size={18}/><span><strong>Workers do not need login accounts.</strong> These are attendance-only employee records managed by authorized farm users.</span></div>
           <section className="attendance-date-bar">
-            <Field label="Attendance date"><input required type="date" value={attendanceDate} onChange={event=>{if(event.target.value){setAttendanceDate(event.target.value);setAttendanceMonth(event.target.value.slice(0,7))}}}/></Field>
+            <Field label="Attendance date"><input required type="date" value={attendanceDate} onChange={event=>{if(event.target.value) syncReportingMonth(event.target.value.slice(0,7), event.target.value)}}/></Field>
             <div className="attendance-bulk-actions">
               <button type="button" disabled={!canWriteModule("attendance")||!attendanceReady||!activeWorkers.length||Boolean(attendanceSaving)} onClick={()=>markAllAttendance("present")}><UserCheck size={16}/> Mark all present</button>
               <button type="button" disabled={!canWriteModule("attendance")||!attendanceReady||!activeWorkers.length||Boolean(attendanceSaving)} onClick={()=>markAllAttendance("absent")}><UserX size={16}/> Mark all absent</button>
@@ -2339,9 +2482,9 @@ export default function App() {
           <section className="attendance-layout">
             <div className="attendance-calendar-panel">
               <header className="attendance-calendar-header">
-                <button aria-label="Previous month" onClick={()=>{const month=shiftAttendanceMonth(attendanceMonth,-1);setAttendanceMonth(month);setAttendanceDate(`${month}-01`)}}><ChevronLeft size={18}/></button>
+                <button aria-label="Previous month" onClick={()=>{const month=shiftAttendanceMonth(attendanceMonth,-1);syncReportingMonth(month,`${month}-01`)}}><ChevronLeft size={18}/></button>
                 <div><strong>{formatAttendanceMonth(attendanceMonth)}</strong><span>{attendanceSummary.recordedDays} recorded day{attendanceSummary.recordedDays===1?"":"s"} · {attendanceSummary.rate}% present</span></div>
-                <button aria-label="Next month" onClick={()=>{const month=shiftAttendanceMonth(attendanceMonth,1);setAttendanceMonth(month);setAttendanceDate(`${month}-01`)}}><ChevronRight size={18}/></button>
+                <button aria-label="Next month" onClick={()=>{const month=shiftAttendanceMonth(attendanceMonth,1);syncReportingMonth(month,`${month}-01`)}}><ChevronRight size={18}/></button>
               </header>
               <div className="attendance-weekdays">{["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map(day=><span key={day}>{day}</span>)}</div>
               <div className="attendance-calendar-grid">
@@ -2350,13 +2493,13 @@ export default function App() {
                   const rows = attendance.filter(row => row.attendance_date === day.date);
                   const presentCount = rows.filter(row => row.status === "present").length;
                   const absentCount = rows.filter(row => row.status === "absent").length;
-                  return <button className={`attendance-day ${day.date===attendanceDate?"selected":""} ${day.date===today?"today":""}`} key={day.date} onClick={()=>setAttendanceDate(day.date)}>
+                  return <button className={`attendance-day ${day.date===attendanceDate?"selected":""} ${day.date===today?"today":""}`} key={day.date} onClick={()=>syncReportingMonth(day.date.slice(0,7),day.date)}>
                     <strong>{day.day}</strong>
                     {rows.length ? <span><b>{presentCount}P</b><i>{absentCount}A</i></span> : <small>—</small>}
                   </button>;
                 })}
               </div>
-              <button className="attendance-today-button" onClick={()=>{setAttendanceDate(today);setAttendanceMonth(today.slice(0,7))}}>Go to today</button>
+              <button className="attendance-today-button" onClick={()=>syncReportingMonth(today.slice(0,7),today)}>Go to today</button>
             </div>
             <div className="attendance-register">
               <header><div><h3>Daily register</h3><p>{formatLongDate(attendanceDate)} · changes save immediately</p></div><span>{attendanceSummary.presentOnDate}/{activeWorkers.length} present</span></header>
@@ -2406,7 +2549,7 @@ export default function App() {
 
         {page === "workforce" && <>
           <section className="hero workforce-hero">
-            <div><span className="eyebrow">V8.5 WORKFORCE OPERATIONS</span><h2>Crews, assignments and approvals</h2><p>Assign one job to individuals or a crew, link every field and crop, then record each employee's hours, overtime and completed units.</p></div>
+            <div><span className="eyebrow">V8.6 WORKFORCE OPERATIONS</span><h2>Crews, assignments and approvals</h2><p>Assign one job to individuals or a crew, link every field and crop, then record each employee's hours, overtime and completed units.</p></div>
             <div className="button-row">
               <button className="button secondary" disabled={!canWriteModule("workforce") || !workforceReady} onClick={() => open("crew")}><Users size={17}/> New crew</button>
               <button className="button primary" disabled={!canWriteModule("workforce") || !workforceReady || !fields.length || !activeWorkers.length} onClick={() => open("assignment")}><Plus size={17}/> Assign job</button>
@@ -2489,7 +2632,7 @@ export default function App() {
           </section>}
 
           {workforceTab === "productivity" && <section className="card workforce-panel">
-            <header className="workforce-panel-header"><div><h3>Employee productivity</h3><p>Approved completed work for {formatAttendanceMonth(payrollMonth)}.</p></div><Field label="Report month"><input type="month" value={payrollMonth} onChange={event => setPayrollMonth(event.target.value)}/></Field></header>
+            <header className="workforce-panel-header"><div><h3>Employee productivity</h3><p>Approved completed work for {formatAttendanceMonth(payrollMonth)}.</p></div><Field label="Report month"><input type="month" value={payrollMonth} onChange={event => syncReportingMonth(event.target.value)}/></Field></header>
             <Table headers={["Employee", "Approved jobs", "Hours", "Output"]}>
               {workforceProductivity.filter(row => matchesSearch(row.worker.full_name, row.worker.role)).map(row => <div className="table-row" key={row.worker.id}>
                 <strong>{row.worker.full_name}<small>{row.worker.role || "Worker"}</small></strong>
@@ -2517,36 +2660,36 @@ export default function App() {
 
         {page === "payroll" && canSeeFinancials && <>
           <section className="hero payroll-hero">
-            <div><span className="eyebrow">V8.5 APPROVED-WORK PAYROLL</span><h2>Payroll, balances and payslips</h2><p>Every employee is paid from approved assignment hours or completed piece-rate units. Attendance remains the daily audit check.</p></div>
-            <div className="payroll-month-control"><Field label="Payroll month"><input type="month" value={payrollMonth} onChange={event => setPayrollMonth(event.target.value)}/></Field><span className={`payroll-period-status ${currentPayrollPeriod?.status || "preview"}`}>{currentPayrollPeriod?.status || "live preview"}</span></div>
+            <div><span className="eyebrow">V8.6 APPROVED-WORK PAYROLL</span><h2>Payroll, balances and payslips</h2><p>Attendance and Payroll now share the same selected month and live attendance totals. Approved work still determines earnings.</p></div>
+            <div className="payroll-month-control"><Field label="Payroll month"><input type="month" value={payrollMonth} onChange={event => syncReportingMonth(event.target.value)}/></Field><span className={`payroll-period-status ${currentPayrollPeriod?.status || "preview"}`}>{currentPayrollPeriod?.status || "live preview"}</span></div>
           </section>
           {!payrollReady && <div className="attendance-setup-note workforce-setup-note"><AlertCircle size={20}/><div><strong>Payroll database setup required</strong><p>Run database-v8-4-workforce-payroll.sql once, then tap Refresh.</p></div></div>}
           <section className="stats-grid payroll-stats">
-            <Stat label="Gross payroll" value={money(payrollSummary.gross)} detail={`${payrollRows.length} employees`}/>
-            <Stat label="Net payroll" value={money(payrollSummary.net)} detail="After advances and deductions"/>
+            <Stat label="Gross payroll" value={money(payrollSummary.gross)} detail={`${money(payrollSummary.bonuses)} bonuses included`}/>
+            <Stat label="Net payroll" value={money(payrollSummary.net)} detail={`${money(payrollSummary.advances)} advances · ${money(payrollSummary.deductions)} deductions`}/>
             <Stat label="Paid" value={money(payrollSummary.paid)} detail="Approved payment history"/>
             <Stat label="Outstanding" value={money(payrollSummary.balance)} detail="Employee balances remaining"/>
           </section>
           <section className="card payroll-control-card">
-            <div><strong>{currentPayrollItems.length ? "Generated payroll snapshot" : "Live payroll preview"}</strong><p>{currentPayrollItems.length ? "Amounts are frozen in this period until you reopen and refresh the draft." : "Review attendance, approved jobs and adjustments, then generate the draft."}</p></div>
+            <div><strong>{["approved","closed"].includes(currentPayrollPeriod?.status) ? "Approved payroll snapshot" : currentPayrollItems.length ? "Live draft with saved snapshot" : "Live payroll preview"}</strong><p>{["approved","closed"].includes(currentPayrollPeriod?.status) ? "Pay amounts are frozen, while the attendance column remains synchronized with the Attendance register." : "Bonuses, advances and attendance changes appear immediately; approval saves the latest values."}</p></div>
             <div className="payroll-actions">
               {(!currentPayrollPeriod || currentPayrollPeriod.status === "draft") && <button className="button secondary" disabled={!payrollReady || saving} onClick={generatePayroll}><RefreshCw size={16}/> {currentPayrollItems.length ? "Refresh draft" : "Generate draft"}</button>}
               {currentPayrollPeriod?.status === "draft" && <button className="button primary" disabled={saving || !currentPayrollItems.length} onClick={() => changePayrollStatus("approved")}><ShieldCheck size={16}/> Approve payroll</button>}
               {currentPayrollPeriod?.status === "approved" && <button className="button secondary" disabled={saving || payrollPayments.some(payment => payment.payroll_period_id === currentPayrollPeriod.id && payment.status === "approved")} onClick={() => changePayrollStatus("draft")}>Reopen draft</button>}
               {currentPayrollPeriod?.status === "approved" && <button className="button primary" disabled={saving || payrollSummary.balance > 0.01} onClick={() => changePayrollStatus("closed")}>Close paid period</button>}
-              <button className="button secondary" disabled={!payrollReady || currentPayrollPeriod?.status === "closed"} onClick={() => open("adjustment")}><Plus size={16}/> Bonus / advance</button>
+              <button className="button secondary" disabled={!payrollReady || ["approved","closed"].includes(currentPayrollPeriod?.status)} onClick={() => open("adjustment")}><Plus size={16}/> Bonus / advance</button>
               <button className="button primary" disabled={!payrollReady || currentPayrollPeriod?.status !== "approved" || payrollSummary.balance <= 0} onClick={() => open("payment")}><CircleDollarSign size={16}/> Record payment</button>
               <button className="button secondary" disabled={!payrollRows.length} onClick={downloadPayrollSummary}><Download size={16}/> Payroll CSV</button>
             </div>
           </section>
           <section className="card payroll-register">
-            <header className="workforce-panel-header"><div><h3>Employee payroll register</h3><p>{formatAttendanceMonth(payrollMonth)} · {currentPayrollItems.length ? "generated values" : "live preview"}</p></div></header>
+            <header className="workforce-panel-header"><div><h3>Employee payroll register</h3><p>{formatAttendanceMonth(payrollMonth)} · live attendance totals · {["approved","closed"].includes(currentPayrollPeriod?.status) ? "approved pay values" : "live pay values"}</p></div></header>
             <div className="payroll-list">
               {payrollRows.filter(row => matchesSearch(row.worker.full_name, row.worker.employee_number, row.worker.wage_type)).map(row => <article className="payroll-worker" key={row.worker.id}>
                 <div className="payroll-person"><div className="worker-avatar">{row.worker.full_name.slice(0,1).toUpperCase()}</div><div><strong>{row.worker.full_name}</strong><span>{row.worker.employee_number || "No employee number"} · {capitalize(row.worker.wage_type || "daily")}</span></div></div>
                 <div><span>Attendance</span><strong>{row.presentDays}P / {row.absentDays}A</strong><small>{row.assignmentCount} approved job{row.assignmentCount===1?"":"s"}</small></div>
                 <div><span>Approved work</span><strong>{money(row.regularPay + row.overtimePay)}</strong><small>{row.regularHours.toFixed(1)} regular + {row.overtimeHours.toFixed(1)} OT hr</small></div>
-                <div><span>Adjustments</span><strong>{money(row.bonuses - row.advances - row.deductions)}</strong><small>Bonus {money(row.bonuses)}</small></div>
+                <div><span>Adjustments</span><strong>{money(row.bonuses - row.advances - row.deductions)}</strong><small>Bonus {money(row.bonuses)} · Advance {money(row.advances)} · Deduction {money(row.deductions)}</small></div>
                 <div><span>Net pay</span><strong>{money(row.netPay)}</strong><small>Paid {money(row.paid)}</small></div>
                 <div className="payroll-balance"><span>Balance</span><strong>{money(row.balance)}</strong><small>{row.balance <= 0 ? "Fully paid" : row.paid > 0 ? "Partly paid" : "Unpaid"}</small></div>
                 <div className="payroll-worker-actions"><button className="small-action" disabled={!currentPayrollItems.length} onClick={() => setPayslipItem(row)}><FileText size={14}/> Payslip</button>{currentPayrollPeriod?.status === "approved" && row.balance > 0 && <button className="small-action approve-action" onClick={() => {setEditingId(null);setForm({...emptyPayment,worker_id:row.worker.id,amount:String(row.balance),method:row.worker.payment_method || "M-Pesa"});setModal("payment")}}>Pay</button>}</div>
@@ -2557,7 +2700,7 @@ export default function App() {
           <section className="split-grid payroll-history-grid">
             <Card title="Bonuses, advances & deductions" subtitle={formatAttendanceMonth(payrollMonth)}>
               <div className="payroll-history-list">
-                {payrollAdjustments.filter(item => item.period_month === payrollPeriodMonth && item.status !== "void").map(item => <article key={item.id}><div><strong>{workerName(item.worker_id)}</strong><span>{capitalize(item.adjustment_type)} · {item.description}</span></div><strong>{money(item.amount)}</strong><button className="small-action danger-action" onClick={() => voidPayrollRecord("payroll_adjustments", item, `${item.adjustment_type} for ${workerName(item.worker_id)}`)}>Void</button></article>)}
+                {payrollAdjustments.filter(item => item.period_month === payrollPeriodMonth && item.status !== "void").map(item => <article key={item.id}><div><strong>{workerName(item.worker_id)}</strong><span>{capitalize(item.adjustment_type)} · {item.description}</span></div><strong>{money(item.amount)}</strong><button className="small-action danger-action" disabled={["approved","closed"].includes(currentPayrollPeriod?.status)} onClick={() => voidPayrollRecord("payroll_adjustments", item, `${item.adjustment_type} for ${workerName(item.worker_id)}`)}>Void</button></article>)}
                 {!payrollAdjustments.some(item => item.period_month === payrollPeriodMonth && item.status !== "void") && <Empty text="No payroll adjustments for this month."/>}
               </div>
             </Card>
@@ -2626,7 +2769,7 @@ export default function App() {
             <div className="table-row revenue-row"><strong>Harvest sales</strong><span>{harvests.length}</span><span>{money(metrics.revenue)}</span><span>Gross revenue—not an expense</span></div>
           </Table>
           <section className="finance-labour-panel">
-            <header className="workforce-panel-header"><div><h3>Approved labour by assignment and employee</h3><p>The exact amount posted for every employee from recorded hours or units.</p></div><Field label="Labour month"><input type="month" value={payrollMonth} onChange={event=>setPayrollMonth(event.target.value)}/></Field></header>
+            <header className="workforce-panel-header"><div><h3>Approved labour by assignment and employee</h3><p>The exact amount posted for every employee from recorded hours or units.</p></div><Field label="Labour month"><input type="month" value={payrollMonth} onChange={event=>syncReportingMonth(event.target.value)}/></Field></header>
             <div className="finance-labour-total"><span>{approvedLabourMonthEntries.length} employee job lines</span><strong>{money(approvedLabourMonthTotal)} accrued</strong></div>
             <Table headers={["Date / assignment","Employee","Work recorded","Amount posted"]}>
               {approvedLabourMonthEntries.map(entry => <div className="table-row" key={`${entry.assignmentId}-${entry.workerId}`}>
@@ -2642,7 +2785,7 @@ export default function App() {
 
         {page === "reports" && <SimplePage title="Analytics & Reports" description="Field performance, profitability and a complete production timeline."
           button="Print / Save PDF" buttonIcon={FileText} onAdd={printReport}>
-          <div className="print-heading"><h2>{farm?.name || "Farm Manager"}</h2><p>V8.5 Farm Command, Approved-work Payroll & Multi-field Operations report · generated {formatLongDate(today)}</p></div>
+          <div className="print-heading"><h2>{farm?.name || "Farm Manager"}</h2><p>V8.6 Farm Command, Approved-work Payroll & Multi-field Operations report · generated {formatLongDate(today)}</p></div>
           <div className="report-toolbar">
             <span>Reports use the live records already saved in Farm Manager.</span>
             {canSeeFinancials && <button className="button secondary" onClick={downloadFieldReport}><Download size={16}/> Download field CSV</button>}
@@ -2680,6 +2823,38 @@ export default function App() {
             </div>
           </section>
         </SimplePage>}
+
+        {page === "profile" && <>
+          <section className="hero profile-hero">
+            <div><span className="eyebrow">ACCOUNT & FARM PROFILE</span><h2>Administrator details</h2><p>Review the signed-in account and keep the Administrator name and farm name current.</p></div>
+            <span className="security-note"><ShieldCheck size={18}/>{ROLE_LABELS[role] || role}</span>
+          </section>
+          <section className="profile-layout">
+            <section className="card profile-details-card">
+              <header className="profile-card-header">
+                <div className="profile-avatar">{(profile?.full_name || session.user.email || "A").slice(0,1).toUpperCase()}</div>
+                <div><h3>{profile?.full_name || "Administrator"}</h3><p>{profile?.email || session.user.email}</p></div>
+              </header>
+              <form className="form profile-form" onSubmit={saveProfile}>
+                <Field label="Administrator full name"><input required disabled={!canManageUsers || profileSaving} value={profileForm.full_name} onChange={event=>setProfileForm({...profileForm,full_name:event.target.value})}/></Field>
+                <Field label="Sign-in email"><input readOnly value={profile?.email || session.user.email || ""}/></Field>
+                <div className="form-grid">
+                  <Field label="Access role"><input readOnly value={ROLE_LABELS[role] || role}/></Field>
+                  <Field label="Account status"><input readOnly value={capitalize(profile?.status || "active")}/></Field>
+                </div>
+                <Field label="Farm name"><input required disabled={!canManageUsers || profileSaving} value={profileForm.farm_name} onChange={event=>setProfileForm({...profileForm,farm_name:event.target.value})}/></Field>
+                {!canManageUsers && <p className="form-note">Only the Owner / Administrator can change the shared Administrator and farm details.</p>}
+                <div className="form-actions"><button className="button primary" disabled={!canManageUsers || profileSaving}>{profileSaving ? "Saving…" : "Save profile"}</button></div>
+              </form>
+            </section>
+            <section className="card profile-security-card">
+              <div className="profile-security-icon"><ShieldCheck size={24}/></div>
+              <div><span className="eyebrow">ACCOUNT SECURITY</span><h3>Change Administrator password</h3><p>Send a secure password-reset link to the current sign-in email. The link returns directly to Farm Manager.</p></div>
+              <button className="button secondary" disabled={profileSaving} onClick={sendProfilePasswordReset}>Send password reset email</button>
+              <div className="profile-account-note"><strong>Signed in as</strong><span>{profile?.email || session.user.email}</span></div>
+            </section>
+          </section>
+        </>}
 
         {page === "users" && canManageUsers && <>
           <section className="hero"><div><h2>Users & permissions</h2><p>Add users, assign roles, suspend access or permanently remove accounts.</p></div><div className="button-row"><span className="security-note"><ShieldCheck size={18}/> Administrator controls</span><button className="button primary" onClick={() => setUserModal(true)}><UserPlus size={17}/> Add user</button></div></section>
@@ -2781,7 +2956,7 @@ export default function App() {
 
       {payslipItem && <div className="overlay payslip-overlay" onMouseDown={() => setPayslipItem(null)}><section className="modal payslip-modal" onMouseDown={event=>event.stopPropagation()}>
         <header className="payslip-toolbar"><div><span className="eyebrow">EMPLOYEE PAYSLIP</span><h2>{formatAttendanceMonth(payrollMonth)}</h2></div><div><button className="button secondary" onClick={() => window.print()}><FileText size={16}/> Print / Save PDF</button><button className="icon-button" onClick={() => setPayslipItem(null)}><X size={19}/></button></div></header>
-        <div className="payslip-brand"><div className="brand-mark"><Sprout size={24}/></div><div><strong>{farm?.name || "Farm Manager"}</strong><span>Farm Manager V8.5 Approved-work Payroll</span></div><b className={`payroll-period-status ${currentPayrollPeriod?.status || "draft"}`}>{currentPayrollPeriod?.status || "draft"}</b></div>
+        <div className="payslip-brand"><div className="brand-mark"><Sprout size={24}/></div><div><strong>{farm?.name || "Farm Manager"}</strong><span>Farm Manager V8.6 Approved-work Payroll</span></div><b className={`payroll-period-status ${currentPayrollPeriod?.status || "draft"}`}>{currentPayrollPeriod?.status || "draft"}</b></div>
         <section className="payslip-employee"><div><span>Employee</span><strong>{payslipItem.worker.full_name}</strong><small>{payslipItem.worker.role || "Worker"}</small></div><div><span>Employee number</span><strong>{payslipItem.worker.employee_number || "—"}</strong><small>{capitalize(payslipItem.worker.employment_type || "casual")}</small></div><div><span>Pay basis</span><strong>{capitalize(payslipItem.worker.wage_type || "daily")}</strong><small>{employeeWageBasis(payslipItem.worker)}</small></div></section>
         <section className="payslip-lines">
           <div><span>Attendance</span><b>{payslipItem.presentDays} present · {payslipItem.absentDays} absent</b></div>
@@ -2810,7 +2985,7 @@ export default function App() {
             <Field label="Field name"><input required value={form.name||""} onChange={e=>setForm({...form,name:e.target.value})}/></Field>
             <Field label="Farm block"><select required value={form.blockId||""} onChange={e=>setForm({...form,blockId:e.target.value})}>{blocks.map(b=><option key={b.id} value={b.id}>{b.name}</option>)}</select></Field>
             <Field label="Area in acres"><input required type="number" step="0.01" value={form.area||""} onChange={e=>setForm({...form,area:e.target.value})}/></Field>
-            <Field label="Status"><select value={form.status||"available"} onChange={e=>setForm({...form,status:e.target.value})}><option value="available">Available</option><option value="growing">Growing</option><option value="fallow">Fallow</option></select></Field>
+            <Field label="Status"><select value={canonicalFieldStatus(form.status)} onChange={e=>setForm({...form,status:e.target.value})}><option value="active">Active</option><option value="growing">Growing</option><option value="fallow">Fallow</option></select></Field>
           </>}
           {modal === "batch" && <>
             <div className="form-grid">
@@ -3240,6 +3415,29 @@ function attendanceBasePay(worker, presentDays, recordedWorkDays) {
   return 0;
 }
 
+function emptyAttendanceTotals(recordedDays = 0) {
+  return { present: 0, absent: 0, marked: 0, unmarked: Math.max(0, Number(recordedDays || 0)) };
+}
+
+function buildAttendanceMonthSummary({ month, workers, attendance }) {
+  const rows = attendance.filter(row => String(row.attendance_date || "").startsWith(month));
+  const dates = [...new Set(rows.map(row => row.attendance_date).filter(Boolean))].sort();
+  const byWorker = new Map();
+  workers.forEach(worker => {
+    const workerRows = rows.filter(row => row.worker_id === worker.id);
+    const present = workerRows.filter(row => row.status === "present").length;
+    const absent = workerRows.filter(row => row.status === "absent").length;
+    const marked = present + absent;
+    byWorker.set(worker.id, {
+      present,
+      absent,
+      marked,
+      unmarked: Math.max(0, dates.length - marked)
+    });
+  });
+  return { rows, dates, byWorker };
+}
+
 function hourlyEquivalent(worker) {
   const explicitHourly = Number(worker?.hourly_rate || 0);
   const hours = Math.max(1, Number(worker?.normal_hours_per_day || 8));
@@ -3384,16 +3582,15 @@ function buildWorkforceAllocation({ workers, assignments, assignmentWorkers, ass
 }
 
 function calculatePayrollPreview({ month, workers, attendance, assignments, assignmentWorkers, adjustments }) {
-  const monthAttendance = attendance.filter(row => String(row.attendance_date || "").startsWith(month));
-  const recordedDates = [...new Set(monthAttendance.map(row => row.attendance_date).filter(Boolean))];
+  const attendanceSummary = buildAttendanceMonthSummary({ month, workers, attendance });
   const approvedAssignments = assignments.filter(assignment =>
     assignment.status === "completed" && assignment.approval_status === "approved" && String(assignment.work_date || "").startsWith(month)
   );
   const monthAdjustments = adjustments.filter(item => item.period_month === `${month}-01` && item.status === "approved");
   return workers.map(worker => {
-    const workerAttendance = monthAttendance.filter(row => row.worker_id === worker.id);
-    const presentDays = workerAttendance.filter(row => row.status === "present").length;
-    const absentDays = workerAttendance.filter(row => row.status === "absent").length;
+    const workerAttendance = attendanceSummary.byWorker.get(worker.id) || emptyAttendanceTotals(attendanceSummary.dates.length);
+    const presentDays = workerAttendance.present;
+    const absentDays = workerAttendance.absent;
     const workerAssignmentLinks = assignmentWorkers.filter(link => link.worker_id === worker.id && approvedAssignments.some(assignment => assignment.id === link.assignment_id));
     let regularPay = 0;
     let overtimePay = 0;
@@ -3411,7 +3608,7 @@ function calculatePayrollPreview({ month, workers, attendance, assignments, assi
     const netPay = Math.max(0, roundNumber(grossPay - advances - deductions, 2));
     return {
       worker,
-      recordedWorkDays: recordedDates.length,
+      recordedWorkDays: attendanceSummary.dates.length,
       presentDays,
       absentDays,
       regularPay: roundNumber(regularPay, 2),
@@ -3467,6 +3664,24 @@ function averageGermination(batches) {
   const valid = batches.filter(b => Number(b.seeds_sown) > 0);
   if (!valid.length) return "—";
   return Math.round(valid.reduce((s,b)=>s+(Number(b.germinated||0)/Number(b.seeds_sown)*100),0)/valid.length) + "%";
+}
+function isActiveNurseryBatch(batch) {
+  return String(batch?.status || "sown").toLowerCase() !== "transplanted";
+}
+function nurseryLiveSeedlings(batch) {
+  return Math.max(0, Number(batch?.germinated || 0) - Number(batch?.losses || 0));
+}
+function canonicalFieldStatus(status) {
+  const value = String(status || "active").toLowerCase();
+  if (["growing", "planted", "harvest_ready"].includes(value)) return "growing";
+  if (["fallow", "resting", "inactive"].includes(value)) return "fallow";
+  return "active";
+}
+function fieldStatusForCycle(status) {
+  const value = String(status || "planned").toLowerCase();
+  if (["planted", "growing", "harvest_ready"].includes(value)) return "growing";
+  if (["completed", "harvested", "closed"].includes(value)) return "active";
+  return null;
 }
 function isMissingAttendanceTable(error) {
   if (!error) return false;
